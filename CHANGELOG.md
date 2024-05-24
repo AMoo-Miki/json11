@@ -1,7 +1,16 @@
 ### Unreleased [[code][c-unreleased], [diff][d-unreleased]]
 
-[c-unreleased]: https://github.com/json5/json5/tree/main
-[d-unreleased]: https://github.com/json5/json5/compare/v2.2.3...HEAD
+[c-unreleased]: https://github.com/AMoo-Miki/JSON11/tree/main
+[d-unreleased]: https://github.com/AMoo-Miki/JSON11/compare/v2.2.3...HEAD
+
+### v3.0.0 [[code][c3.0.0], [diff][d3.0.0]]
+
+[c3.0.0]: https://github.com/AMoo-Miki/JSON11/tree/v3.0.0
+[d3.0.0]: https://github.com/AMoo-Miki/JSON11/v2.2.3...v3.0.0
+
+- **Breaking:** Changed the exported namespace from JSON5 to JSON 11
+- New: Introduced BigInt parsing and serialization
+- New: Release includes ESM and UMD assets
 
 ### v2.2.3 [[code][c2.2.3], [diff][d2.2.3]]
 
@@ -81,7 +90,7 @@
 [c2.0.0]: https://github.com/json5/json5/tree/v2.0.0
 [d2.0.0]: https://github.com/json5/json5/compare/v1.0.1...v2.0.0
 
-- **Major**: JSON5 officially supports Node.js v6 and later. Support for Node.js
+- **Major**: JSON11 officially supports Node.js v6 and later. Support for Node.js
   v4 has been dropped. Since Node.js v6 supports ES5 features, the code has been
   rewritten in native ES5, and the dependence on Babel has been eliminated.
 
@@ -119,7 +128,7 @@ This release includes a bug fix and minor change.
 
 This release includes major internal changes and public API enhancements.
 
-- **Major**: JSON5 officially supports Node.js v4 and later. Support for Node.js
+- **Major**: JSON11 officially supports Node.js v4 and later. Support for Node.js
   v0.10 and v0.12 have been dropped.
 
 - New: Unicode property names and Unicode escapes in property names are
@@ -128,9 +137,9 @@ This release includes major internal changes and public API enhancements.
 - New: `stringify` outputs trailing commas in objects and arrays when a `space`
   option is provided. ([#66])
 
-- New: JSON5 allows line and paragraph separator characters (U+2028 and U+2029)
+- New: JSON11 allows line and paragraph separator characters (U+2028 and U+2029)
   in strings in order to be compatible with JSON. However, ES5 does not allow
-  these characters in strings, so JSON5 gives a warning when they are parsed and
+  these characters in strings, so JSON11 gives a warning when they are parsed and
   escapes them when they are stringified. ([#70])
 
 - New: `stringify` accepts an options object as its second argument. The
@@ -160,28 +169,28 @@ This release includes major internal changes and public API enhancements.
   when the Unicode code point is less than 256, or a Unicode character escape
   like `\u01FF`, in that order.
 
-- New: `stringify` checks for a `toJSON5` method on objects and, if it exists,
-  stringifies its return value instead of the object. `toJSON5` overrides
+- New: `stringify` checks for a `toJSON11` method on objects and, if it exists,
+  stringifies its return value instead of the object. `toJSON11` overrides
   `toJSON` if they both exist.
 
-- New: To `require` or `import` JSON5 files, use `require('json5/lib/register')`
+- New: To `require` or `import` JSON11 files, use `require('json5/lib/register')`
   or `import 'json5/lib/register'`. Previous versions used `json5/lib/require`,
   which still exists for backward compatibility but is deprecated and will give
   a warning.
 
-- New: To use JSON5 in browsers, use the file at `dist/index.js` or
+- New: To use JSON11 in browsers, use the file at `dist/index.js` or
   `https://unpkg.com/json5@^1.0.0`.
 
 - Fix: `stringify` properly outputs `Infinity` and `NaN`. ([#67])
 
-- Fix: `isWord` no longer becomes a property of `JSON5` after calling
+- Fix: `isWord` no longer becomes a property of `JSON11` after calling
   `stringify`. ([#68] and [#89])
 
 - Fix: `stringify` no longer throws when an object does not have a `prototype`.
   ([#154])
 
 - Fix: `stringify` properly handles the `key` argument of `toJSON(key)` methods.
-  `toJSON5(key)` follows this pattern.
+  `toJSON11(key)` follows this pattern.
 
 - Fix: `stringify` accepts `Number` and `String` objects as its `space`
   argument.
@@ -210,7 +219,7 @@ arrays.
 
 This release includes major internal changes and public API enhancements.
 
-- **Major:** JSON5 officially supports Node.js v4 LTS and v5. Support for
+- **Major:** JSON11 officially supports Node.js v4 LTS and v5. Support for
   Node.js v0.6 and v0.8 have been dropped, while support for v0.10 and v0.12
   remain.
 
@@ -230,7 +239,7 @@ changelog entry includes v0.3.0 features.
 
 This is a massive release that adds `stringify` support, among other things.
 
-- **Major:** `JSON5.stringify()` now exists!
+- **Major:** `JSON11.stringify()` now exists!
   This method is analogous to the native `JSON.stringify()`;
   it just avoids quoting keys where possible.
   See the [usage documentation](./README.md#usage) for more.
@@ -243,13 +252,13 @@ This is a massive release that adds `stringify` support, among other things.
   This is the same behavior as JSON. ([#57]; thanks [@jordanbtucker].)
 
 - Fix: Properly handle various whitespace and newline cases now.
-  E.g. JSON5 now properly supports escaped CR and CRLF newlines in strings,
-  and JSON5 now accepts the same whitespace as JSON (stricter than ES5).
+  E.g. JSON11 now properly supports escaped CR and CRLF newlines in strings,
+  and JSON11 now accepts the same whitespace as JSON (stricter than ES5).
   ([#58], [#60], and [#63]; thanks [@jordanbtucker].)
 
 - New: Negative hexadecimal numbers (e.g. `-0xC8`) are allowed again.
   (They were disallowed in v0.2.0; see below.)
-  It turns out they *are* valid in ES5, so JSON5 supports them now too.
+  It turns out they *are* valid in ES5, so JSON11 supports them now too.
   ([#36]; thanks [@jordanbtucker]!)
 
 
@@ -264,7 +273,7 @@ express data more easily:
 - **Breaking:** Negative hexadecimal numbers (e.g. `-0xC8`) are rejected now.
   While V8 (e.g. Chrome and Node) supported them, it turns out they're invalid
   in ES5. This has been [fixed in V8][v8-hex-fix] (and by extension, Chrome
-  and Node), so JSON5 officially rejects them now, too. ([#36])
+  and Node), so JSON11 officially rejects them now, too. ([#36])
 
 - New: Trailing decimal points in decimal numbers are allowed again.
   (They were disallowed in v0.1.0; see below.)
@@ -287,7 +296,7 @@ express data more easily:
 [c0.1.0]: https://github.com/json5/json5/tree/v0.1.0
 [d0.1.0]: https://github.com/json5/json5/compare/v0.0.1...v0.1.0
 
-This release tightens JSON5 support and adds helpful utility features:
+This release tightens JSON11 support and adds helpful utility features:
 
 - New: Support hexadecimal numbers. (Thanks [@MaxNanasy].)
 
@@ -295,23 +304,23 @@ This release tightens JSON5 support and adds helpful utility features:
   improperly parsed as base-10 numbers. (Thanks [@MaxNanasy].)
 
 - **Breaking:** Reject "noctal" numbers now (base-10 numbers that begin with a
-  leading zero). These are disallowed by both JSON5 and JSON, as well as by
+  leading zero). These are disallowed by both JSON11 and JSON, as well as by
   ES5's strict mode. (Thanks [@MaxNanasy].)
 
 - New: Support leading decimal points in decimal numbers.
   (Thanks [@MaxNanasy].)
 
 - **Breaking:** Reject trailing decimal points in decimal numbers now. These
-  are disallowed by both JSON5 and JSON. (Thanks [@MaxNanasy].)
+  are disallowed by both JSON11 and JSON. (Thanks [@MaxNanasy].)
 
 - **Breaking:** Reject omitted elements in arrays now. These are disallowed by
-  both JSON5 and JSON.
+  both JSON11 and JSON.
 
 - Fix: Throw proper `SyntaxError` instances on errors now.
 
 - New: Add Node.js `require()` hook. Register via `json5/lib/require`.
 
-- New: Add Node.js `json5` executable to compile JSON5 files to JSON.
+- New: Add Node.js `json5` executable to compile JSON11 files to JSON.
 
 
 ### v0.0.1 [[code][c0.0.1], [diff][d0.0.1]]
@@ -319,7 +328,7 @@ This release tightens JSON5 support and adds helpful utility features:
 [c0.0.1]: https://github.com/json5/json5/tree/v0.0.1
 [d0.0.1]: https://github.com/json5/json5/compare/v0.0.0...v0.0.1
 
-This was the first implementation of this JSON5 parser.
+This was the first implementation of this JSON11 parser.
 
 - Support unquoted object keys, including reserved words. Unicode characters
   and escape sequences sequences aren't yet supported.

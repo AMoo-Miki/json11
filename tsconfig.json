@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Node",
+    "noEmitOnError": true,
+    "lib": ["ES2022"],
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "allowSyntheticDefaultImports": true,
+    "skipLibCheck": false,
+    "outDir": "./dist/tsc",
+    "rootDir": "./src",
+    "sourceMap": true,
+    "sourceRoot": "../src",
+    "allowJs": false,
+    "removeComments": true,
+
+    /* Linting */
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true
+  },
+  "include": ["./src/**/*.ts"]
+}
