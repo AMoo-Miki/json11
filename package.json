@@ -1,9 +1,9 @@
 {
   "name": "json11",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "JSON for Humans",
-  "bin": "src/cli.js",
-  "browser": "dist/umd/index.js",
+  "bin": "./dist/cli.mjs",
+  "browser": "./dist/umd/index.js",
   "exports": {
     "import": "./dis/es/index.mjs",
     "require": "./dist/cjs/index.cjs"
@@ -15,8 +15,9 @@
     "dist/"
   ],
   "scripts": {
-    "build": "npm run build:lib && npm run build:mini && npm run build:type",
+    "build": "npm run build:lib && npm run build:cli && npm run build:mini && npm run build:type",
     "build:lib": "vite build",
+    "build:cli": "vite build --mode cli",
     "build:mini": "MINIFY=true vite build",
     "build:type": "dts-bundle-generator -o ./dist/index.d.ts ./src/index.ts --no-banner --export-referenced-types --umd-module-name=JSON11",
     "generate-unicode": "node build/unicode.js",

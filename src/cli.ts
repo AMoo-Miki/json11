@@ -2,8 +2,8 @@
 
 import { createReadStream, createWriteStream } from 'fs';
 import { parse as parsePath, format, basename } from 'path';
-import pkg from '../package.json';
-import { parse } from './';
+import {  version } from '../package.json';
+import { parse } from './index';
 
 interface Args {
   convert?: boolean;
@@ -19,7 +19,7 @@ interface Args {
 const args: Args = parseArgs();
 
 if (args.version) {
-  console.log(`v${pkg.version}`);
+  console.log(`v${version}`);
 } else if (args.help) {
   printUsage();
 } else {
