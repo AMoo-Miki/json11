@@ -1,6 +1,6 @@
 {
   "name": "json11",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "JSON for humans and machines",
   "bin": "./dist/cli.mjs",
   "browser": "./dist/umd/index.js",
@@ -22,9 +22,10 @@
     "build:mini": "MINIFY=true vite build",
     "build:type": "dts-bundle-generator -o ./dist/index.d.ts ./src/index.ts --no-banner --export-referenced-types --umd-module-name=JSON11",
     "generate-unicode": "node build/unicode.js",
-    "lint": "eslint --fix .",
-    "lint-report": "eslint .",
-    "test": "vitest --run"
+    "lint": "eslint .",
+    "lint-fix": "eslint --fix .",
+    "test": "vitest --run",
+    "prepublishOnly": "npm run test && npm run lint && npm run build"
   },
   "repository": {
     "type": "git",
