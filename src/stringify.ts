@@ -8,12 +8,16 @@ export type Stringify11Options = {
    * When false, the `n` suffix is not included after the long numeral.
    */
   withBigInt?: boolean,
+  /* Add a trailing comma to arrays and objects, like JSON5.
+   * Applicable only when space is used for indenting.
+   */
+  trailingComma?: boolean,
 };
 export type StringifyOptions = Stringify11Options & {
   replacer?: Replacer | AllowList | null,
   space?: string | number | String | Number | null,
   quote?: string,
-  quoteNames?: boolean
+  quoteNames?: boolean,
 };
 
 export function stringify(
@@ -49,6 +53,7 @@ export function stringify(
   let quote: string | undefined;
   let withBigInt: boolean | undefined;
   let nameSerializer: Function = serializeKey;
+  let trailingComma: string = '';
 
   const quoteWeights: Record<string, number> = {
     '\'': 0.1,
@@ -77,6 +82,9 @@ export function stringify(
     !Array.isArray(replacerOrAllowListOrOptions)
   ) {
     gap = getGap(replacerOrAllowListOrOptions.space);
+    if (replacerOrAllowListOrOptions.trailingComma) {
+      trailingComma = ',';
+    }
     quote = replacerOrAllowListOrOptions.quote?.trim?.();
     if (replacerOrAllowListOrOptions.quoteNames === true) {
       nameSerializer = quoteString;
@@ -106,6 +114,9 @@ export function stringify(
 
     gap = getGap(space);
     withBigInt = options?.withBigInt;
+    if (options?.trailingComma) {
+      trailingComma = ',';
+    }
   }
 
   return serializeProperty('', { '': value });
@@ -248,9 +259,8 @@ export function stringify(
         properties = partial.join(',');
         final = '{' + properties + '}';
       } else {
-        let separator = ',\n' + indent;
-        properties = partial.join(separator);
-        final = '{\n' + indent + properties + ',\n' + stepback + '}';
+        properties = partial.join(',\n' + indent);
+        final = '{\n' + indent + properties + trailingComma + '\n' + stepback + '}';
       }
     }
 
@@ -302,9 +312,8 @@ export function stringify(
         let properties = partial.join(',');
         final = '[' + properties + ']';
       } else {
-        let separator = ',\n' + indent;
-        let properties = partial.join(separator);
-        final = '[\n' + indent + properties + ',\n' + stepback + ']';
+        let properties = partial.join(',\n' + indent);
+        final = '[\n' + indent + properties + trailingComma + '\n' + stepback + ']';
       }
     }
 

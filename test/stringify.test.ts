@@ -410,7 +410,7 @@ describe('stringify(value, options)', () => {
     });
   });
 
-  describe.concurrent('quote', () => {
+  describe.concurrent(`quote: '"'`, () => {
     describe.concurrent('Objects', () => {
       it('stringifies unquoted property names', () => {
         expect(stringify({ a: 1 }, { quote: '"' })).toBe('{a:1}');
@@ -509,7 +509,7 @@ describe('stringify(value, options)', () => {
 
   });
 
-  describe.concurrent('quoteNames', () => {
+  describe.concurrent('quoteNames: true', () => {
     describe.concurrent('Objects', () => {
       it('stringifies unquoted property names', () => {
         expect(stringify({ a: 1 }, { quote: '"', quoteNames: true })).toBe('{"a":1}');
@@ -533,6 +533,127 @@ describe('stringify(value, options)', () => {
 
       it('stringifies nested objects', () => {
         expect(stringify({ a: { b: 2 } }, { quote: '"', quoteNames: true })).toBe('{"a":{"b":2}}');
+      });
+    });
+  });
+
+  describe('space', () => {
+    describe.concurrent('Objects', () => {
+      it('stringifies empty objects', () => {
+        expect(stringify({}, { space: 2 })).toBe('{}');
+      });
+
+      it('stringifies unquoted property names', () => {
+        expect(stringify({ a: 1 }, { space: 2 })).toBe('{\n  a: 1\n}');
+      });
+
+      it('stringifies property names with special chars in quotes', () => {
+        expect(stringify({ 'a-b': 1 }, { space: 2 })).toBe(`{\n  'a-b': 1\n}`);
+      });
+
+      it('stringifies single quoted string property names', () => {
+        expect(stringify({ 'a\'': 1 }, { space: 2 })).toBe(`{\n  "a'": 1\n}`);
+      });
+
+      it('stringifies double quoted string property names', () => {
+        expect(stringify({ "a\"": 1 }, { space: 2 })).toBe(`{\n  'a"': 1\n}`);
+      });
+
+      it('stringifies empty string property names', () => {
+        expect(stringify({ '': 1 }, { space: 2 })).toBe(`{\n  '': 1\n}`);
+      });
+
+      it('stringifies special character property names', () => {
+        expect(stringify({ $_: 1, _$: 2, 'a\u200C': 3 }, { space: 2 }))
+          .toBe('{\n  $_: 1,\n  _$: 2,\n  a\u200c: 3\n}');
+      });
+
+      it('stringifies unicode property names', () => {
+        expect(stringify({ 'ùńîċõďë': 9 }, { space: 2 })).toBe('{\n  ùńîċõďë: 9\n}');
+      });
+
+      it('stringifies nested objects', () => {
+        expect(stringify({ a: { b: 2 } }, { space: 2 })).toBe('{\n  a: {\n    b: 2\n  }\n}');
+      });
+    });
+
+    describe.concurrent('Arrays', () => {
+      it('stringifies empty arrays', () => {
+        expect(stringify([], { space: 2 })).toBe('[]');
+      });
+
+      it('stringifies array values', () => {
+        expect(stringify([1], { space: 2 })).toBe('[\n  1\n]');
+      });
+
+      it('stringifies multiple array values', () => {
+        expect(stringify([1, 2], { space: 2 })).toBe('[\n  1,\n  2\n]');
+      });
+
+      it('stringifies nested arrays', () => {
+        expect(stringify([1, [2, 3]], { space: 2 })).toBe('[\n  1,\n  [\n    2,\n    3\n  ]\n]');
+      });
+    });
+  });
+
+  describe('trailingComma', () => {
+    describe.concurrent('Objects', () => {
+      it('stringifies empty objects', () => {
+        expect(stringify({}, { space: 2, trailingComma: true })).toBe('{}');
+      });
+
+      it('stringifies unquoted property names', () => {
+        expect(stringify({ a: 1 }, { space: 2, trailingComma: true })).toBe('{\n  a: 1,\n}');
+      });
+
+      it('stringifies property names with special chars in quotes', () => {
+        expect(stringify({ 'a-b': 1 }, { space: 2, trailingComma: true })).toBe(`{\n  'a-b': 1,\n}`);
+      });
+
+      it('stringifies single quoted string property names', () => {
+        expect(stringify({ 'a\'': 1 }, { space: 2, trailingComma: true })).toBe(`{\n  "a'": 1,\n}`);
+      });
+
+      it('stringifies double quoted string property names', () => {
+        expect(stringify({ "a\"": 1 }, { space: 2, trailingComma: true })).toBe(`{\n  'a"': 1,\n}`);
+      });
+
+      it('stringifies empty string property names', () => {
+        expect(stringify({ '': 1 }, { space: 2, trailingComma: true })).toBe(`{\n  '': 1,\n}`);
+      });
+
+      it('stringifies special character property names', () => {
+        expect(stringify({ $_: 1, _$: 2, 'a\u200C': 3 }, { space: 2, trailingComma: true }))
+          .toBe('{\n  $_: 1,\n  _$: 2,\n  a\u200c: 3,\n}');
+      });
+
+      it('stringifies unicode property names', () => {
+        expect(stringify({ 'ùńîċõďë': 9 }, { space: 2, trailingComma: true }))
+          .toBe('{\n  ùńîċõďë: 9,\n}');
+      });
+
+      it('stringifies nested objects', () => {
+        expect(stringify({ a: { b: 2 } }, { space: 2, trailingComma: true }))
+          .toBe('{\n  a: {\n    b: 2,\n  },\n}');
+      });
+    });
+
+    describe.concurrent('Arrays', () => {
+      it('stringifies empty arrays', () => {
+        expect(stringify([], { space: 2, trailingComma: true })).toBe('[]');
+      });
+
+      it('stringifies array values', () => {
+        expect(stringify([1], { space: 2, trailingComma: true })).toBe('[\n  1,\n]');
+      });
+
+      it('stringifies multiple array values', () => {
+        expect(stringify([1, 2], { space: 2, trailingComma: true })).toBe('[\n  1,\n  2,\n]');
+      });
+
+      it('stringifies nested arrays', () => {
+        expect(stringify([1, [2, 3]], { space: 2, trailingComma: true }))
+          .toBe('[\n  1,\n  [\n    2,\n    3,\n  ],\n]');
       });
     });
   });
