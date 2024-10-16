@@ -36,11 +36,11 @@ describe('stringify(value)', () => {
     });
 
     it('stringifies escaped property names', () => {
-      expect(stringify({ '\\\b\f\n\r\t\v\0\x01': 1 })).toBe('{\'\\\\\\b\\f\\n\\r\\t\\v\\0\\x01\':1}');
+      expect(stringify({ '\\\b\f\n\r\t\v\0\x01': 1 })).toBe('{\'\\\\\\b\\f\\n\\r\\t\\u000b\\u0000\\u0001\':1}');
     });
 
     it('stringifies escaped null character property names', () => {
-      expect(stringify({ '\0\x001': 1 })).toBe('{\'\\0\\x001\':1}');
+      expect(stringify({ '\0\x001': 1 })).toBe('{\'\\u0000\\u00001\':1}');
     });
 
     it('stringifies multiple properties', () => {
@@ -145,11 +145,11 @@ describe('stringify(value)', () => {
     });
 
     it('stringifies escaped characters', () => {
-      expect(stringify('\\\b\f\n\r\t\v\0\x0f')).toBe('\'\\\\\\b\\f\\n\\r\\t\\v\\0\\x0f\'');
+      expect(stringify('\\\b\f\n\r\t\v\0\x0f')).toBe('\'\\\\\\b\\f\\n\\r\\t\\u000b\\u0000\\u000f\'');
     });
 
     it('stringifies escaped null characters', () => {
-      expect(stringify('\0\x001')).toBe('\'\\0\\x001\'');
+      expect(stringify('\0\x001')).toBe('\'\\u0000\\u00001\'');
     });
 
     it('stringifies escaped single quotes', () => {
@@ -441,11 +441,11 @@ describe('stringify(value, options)', () => {
       });
 
       it('stringifies escaped property names', () => {
-        expect(stringify({ '\\\b\f\n\r\t\v\0\x01': 1 }, { quote: '"' })).toBe('{"\\\\\\b\\f\\n\\r\\t\\v\\0\\x01":1}');
+        expect(stringify({ '\\\b\f\n\r\t\v\0\x01': 1 }, { quote: '"' })).toBe('{"\\\\\\b\\f\\n\\r\\t\\u000b\\u0000\\u0001":1}');
       });
 
       it('stringifies escaped null character property names', () => {
-        expect(stringify({ '\0\x001': 1 }, { quote: '"' })).toBe('{"\\0\\x001":1}');
+        expect(stringify({ '\0\x001': 1 }, { quote: '"' })).toBe('{"\\u0000\\u00001":1}');
       });
 
       it('stringifies multiple properties', () => {
@@ -483,11 +483,11 @@ describe('stringify(value, options)', () => {
       });
 
       it('stringifies escaped characters', () => {
-        expect(stringify('\\\b\f\n\r\t\v\0\x0f', { quote: '"' })).toBe('"\\\\\\b\\f\\n\\r\\t\\v\\0\\x0f"');
+        expect(stringify('\\\b\f\n\r\t\v\0\x0f', { quote: '"' })).toBe('"\\\\\\b\\f\\n\\r\\t\\u000b\\u0000\\u000f"');
       });
 
       it('stringifies escaped null characters', () => {
-        expect(stringify('\0\x001', { quote: '"' })).toBe('"\\0\\x001"');
+        expect(stringify('\0\x001', { quote: '"' })).toBe('"\\u0000\\u00001"');
       });
 
       it('stringifies escaped single quotes', () => {
@@ -623,8 +623,8 @@ describe('stringify(value, options)', () => {
       });
 
       it('stringifies special character property names', () => {
-        expect(stringify({ $_: 1, _$: 2, 'a\u200C': 3 }, { space: 2, trailingComma: true }))
-          .toBe('{\n  $_: 1,\n  _$: 2,\n  a\u200c: 3,\n}');
+        expect(stringify({ $_: 1, _$: 2, 'a\u200C': 3, '\x10': 4 }, { space: 2, trailingComma: true }))
+          .toBe('{\n  $_: 1,\n  _$: 2,\n  a\u200c: 3,\n  \'\\u0010\': 4,\n}');
       });
 
       it('stringifies unicode property names', () => {
@@ -674,6 +674,47 @@ describe('stringify(value, null, null, options)', () => {
 
     it('stringifies bigints with the n-suffix when withBigInt is false', () => {
       expect(stringify({ a: bigNumeral }, null, null, { withBigInt: false })).toBe(`{a:${longNumeral}}`);
+    });
+  });
+
+  describe.concurrent('withLegacyEscapes', () => {
+    it('stringifies escaped characters when withLegacyEscapes is unset', () => {
+      expect(stringify('\\\b\f\n\r\t\v\0\x0f', null, null, { quote: '"' })).toBe('"\\\\\\b\\f\\n\\r\\t\\u000b\\u0000\\u000f"');
+    });
+
+    it('stringifies escaped characters when withLegacyEscapes is true', () => {
+      expect(stringify('\\\b\f\n\r\t\v\0\x0f', null, null, { withLegacyEscapes: true, quote: '"' })).toBe('"\\\\\\b\\f\\n\\r\\t\\v\\0\\x0f"');
+    });
+
+    it('stringifies escaped characters when withLegacyEscapes is false', () => {
+      expect(stringify('\\\b\f\n\r\t\v\0\x0f', null, null, { withLegacyEscapes: false, quote: '"' })).toBe('"\\\\\\b\\f\\n\\r\\t\\u000b\\u0000\\u000f"');
+    });
+
+    it('stringifies escaped null characters when withLegacyEscapes is unset', () => {
+      expect(stringify('\0\x001', null, null, { quote: '"' })).toBe('"\\u0000\\u00001"');
+    });
+
+    it('stringifies escaped null characters when withLegacyEscapes is true', () => {
+      expect(stringify('\0\x001', null, null, { withLegacyEscapes: true, quote: '"' })).toBe('"\\0\\x001"');
+    });
+
+    it('stringifies escaped null characters when withLegacyEscapes is false', () => {
+      expect(stringify('\0\x001', null, null, { withLegacyEscapes: false, quote: '"' })).toBe('"\\u0000\\u00001"');
+    });
+
+    it('stringifies special character property names when withLegacyEscapes is unset', () => {
+      expect(stringify({ $_: 1, _$: 2, 'a\u200C': 3, '\x10': 4 }, null, 2, { quote: '"', trailingComma: true }))
+        .toBe('{\n  $_: 1,\n  _$: 2,\n  a\u200c: 3,\n  "\\u0010": 4,\n}');
+    });
+
+    it('stringifies special character property names when withLegacyEscapes is false', () => {
+      expect(stringify({ $_: 1, _$: 2, 'a\u200C': 3, '\x10': 4 }, null, 2, { withLegacyEscapes: true, quote: '"', trailingComma: true }))
+        .toBe('{\n  $_: 1,\n  _$: 2,\n  a\u200c: 3,\n  "\\x10": 4,\n}');
+    });
+
+    it('stringifies special character property names when withLegacyEscapes is true', () => {
+      expect(stringify({ $_: 1, _$: 2, 'a\u200C': 3, '\x10': 4 }, null, 2, { withLegacyEscapes: false, quote: '"', trailingComma: true }))
+        .toBe('{\n  $_: 1,\n  _$: 2,\n  a\u200c: 3,\n  "\\u0010": 4,\n}');
     });
   });
 });

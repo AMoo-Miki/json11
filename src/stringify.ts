@@ -2,7 +2,11 @@ import * as util from './util';
 
 export type AllowList = (string | number)[];
 export type Replacer = (this: any, key: string, value: any) => any;
-export type Stringify11Options = {
+export type StringifyQuoteOptions = {
+  quote?: string,
+  quoteNames?: boolean,
+};
+export type Stringify11Options = StringifyQuoteOptions & {
   /* Allow serializing BigInt values as <num>n.
    * When undefined or true, BigInt values are serialized with the `n` suffix.
    * When false, the `n` suffix is not included after the long numeral.
@@ -12,12 +16,15 @@ export type Stringify11Options = {
    * Applicable only when space is used for indenting.
    */
   trailingComma?: boolean,
+  /* Use legacy escape sequences, like JSON5.
+   * When true, \v, \0, and \x0-\x19 will be serialized as \v, \0, and \x0-\x19
+   * When undefined or false, \v, \0, and \x0-\x19 will be serialized as \u000b, \u0000, and \u0000-\u0019
+   */
+  withLegacyEscapes?: boolean,
 };
 export type StringifyOptions = Stringify11Options & {
   replacer?: Replacer | AllowList | null,
   space?: string | number | String | Number | null,
-  quote?: string,
-  quoteNames?: boolean,
 };
 
 export function stringify(
@@ -52,27 +59,13 @@ export function stringify(
   let gap = '';
   let quote: string | undefined;
   let withBigInt: boolean | undefined;
+  let withLegacyEscapes: boolean | undefined;
   let nameSerializer: Function = serializeKey;
   let trailingComma: string = '';
 
   const quoteWeights: Record<string, number> = {
     '\'': 0.1,
     '"': 0.2,
-  };
-
-  const quoteReplacements: { [key: string]: string } = {
-    '\'': '\\\'',
-    '"': '\\"',
-    '\\': '\\\\',
-    '\b': '\\b',
-    '\f': '\\f',
-    '\n': '\\n',
-    '\r': '\\r',
-    '\t': '\\t',
-    '\v': '\\v',
-    '\0': '\\0',
-    '\u2028': '\\u2028',
-    '\u2029': '\\u2029',
   };
 
   if (
@@ -93,6 +86,7 @@ export function stringify(
       replacer = replacerOrAllowListOrOptions.replacer;
     }
     withBigInt = replacerOrAllowListOrOptions.withBigInt;
+    withLegacyEscapes = replacerOrAllowListOrOptions.withLegacyEscapes === true;
   } else {
     if (
       // replacerOrAllowListOrOptions is Replacer
@@ -113,11 +107,32 @@ export function stringify(
     }
 
     gap = getGap(space);
+    quote = options?.quote?.trim?.();
+    if (options?.quoteNames === true) {
+      nameSerializer = quoteString;
+    }
     withBigInt = options?.withBigInt;
+    withLegacyEscapes = options?.withLegacyEscapes === true;
     if (options?.trailingComma) {
       trailingComma = ',';
     }
   }
+
+  const quoteReplacements: { [key: string]: string } = {
+    '\'': '\\\'',
+    '"': '\\"',
+    '\\': '\\\\',
+    '\b': '\\b',
+    '\f': '\\f',
+    '\n': '\\n',
+    '\r': '\\r',
+    '\t': '\\t',
+    '\v': withLegacyEscapes ? '\\v' : '\\u000b',
+    '\0': withLegacyEscapes ? '\\0' : '\\u0000',
+    '\u2028': '\\u2028',
+    '\u2029': '\\u2029',
+  };
+  const quoteReplacementForNulFollowedByDigit = withLegacyEscapes ? '\\x00' : '\\u0000';
 
   return serializeProperty('', { '': value });
 
@@ -200,7 +215,7 @@ export function stringify(
 
         case '\0':
           if (util.isDigit(value[i + 1])) {
-            product += '\\x00';
+            product += quoteReplacementForNulFollowedByDigit;
             continue;
           }
       }
@@ -212,7 +227,9 @@ export function stringify(
 
       if (c < ' ') {
         let hexString = c.charCodeAt(0).toString(16);
-        product += '\\x' + ('00' + hexString).substring(hexString.length);
+        product += withLegacyEscapes
+          ? '\\x' + ('00' + hexString).substring(hexString.length)
+          : '\\u' + hexString.padStart(4, '0');
         continue;
       }
 
