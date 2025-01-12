@@ -1,11 +1,11 @@
 {
   "name": "json11",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "JSON for humans and machines",
   "bin": "./dist/cli.mjs",
   "browser": "./dist/umd/index.js",
   "exports": {
-    "import": "./dis/es/index.mjs",
+    "import": "./dist/es/index.mjs",
     "require": "./dist/cjs/index.cjs"
   },
   "main": "./dist/cjs/index.cjs",
