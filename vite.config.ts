@@ -46,6 +46,12 @@ export default defineConfig(({ mode }) => {
       },
       rollupOptions: {
         external: ['path', 'fs'],
+        // We intentionally ship both named exports and a default export so all
+        // import styles work; force 'named' so the default lands on `.default`
+        // across umd/cjs/es instead of triggering a mixed-exports warning.
+        output: {
+          exports: 'named',
+        },
         plugins: [
           process.env.MINIFY
             ? terser({

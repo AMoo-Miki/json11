@@ -16,7 +16,8 @@ vulnerability to the public. Read GitHub's documentation on [privately reporting
 a security vulnerability] for details.
 
 If you are unable to draft a security advisory, or if you need help or have
-security related questions, please send an email to [security@json5.org].
+security related questions, please open a draft advisory using the link above, or
+contact the maintainer through GitHub.
 
 Please do not report undisclosed vulnerabilities on public sites or forums,
 including GitHub issues and pull requests. Reporting vulnerabilities to the
@@ -35,11 +36,10 @@ fork] to collaborate on a patch.
 We appreciate your cooperation in helping keep our users safe by following this
 policy.
 
-[github security advisories]: https://github.com/json5/json5/security/advisories
+[github security advisories]: https://github.com/AMoo-Miki/json11/security/advisories
 [new security advisory on github]:
-  https://github.com/json5/json5/security/advisories/new
+  https://github.com/AMoo-Miki/json11/security/advisories/new
 [privately reporting a security vulnerability]:
   https://docs.github.com/en/code-security/security-advisories/guidance-on-reporting-and-writing/privately-reporting-a-security-vulnerability
-[security@json5.org]: mailto:security@json5.org
 [temporary private fork]:
   https://docs.github.com/en/code-security/security-advisories/repository-security-advisories/collaborating-in-a-temporary-private-fork-to-resolve-a-repository-security-vulnerability

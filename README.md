@@ -8,7 +8,7 @@ itself a superset of JSON (so valid JSON and JSON5 files will always be valid JS
 to include some productions from [ECMAScript 11] (ES11).
 It's also a _subset_ of ES11, so valid JSON11 files will always be valid ES11.[*](#ecmascript-compatibility)
 
-[JSON]: https://tools.ietf.org/html/rfc715
+[JSON]: https://www.rfc-editor.org/rfc/rfc8259
 
 [JSON5]: https://json5.org/
 
@@ -83,12 +83,19 @@ npm install json11
 #### CommonJS
 ```js
 const JSON11 = require('json11')
+// named exports also work: const { parse, stringify } = require('json11')
 ```
 
 #### Modules
 ```js
 import JSON11 from 'json11'
+// or namespace: import * as JSON11 from 'json11'
+// or named:     import { parse, stringify } from 'json11'
 ```
+
+> All import styles are supported: default (`import JSON11 from 'json11'`),
+> namespace (`import * as JSON11 from 'json11'`), and named imports all bind
+> the same API.
 
 ### Browsers
 #### UMD
@@ -134,7 +141,7 @@ replacer function is specified, or optionally including only the specified
 properties if a replacer array is specified.
 
 #### Syntax
-    JSON11.stringify(value[, replacer[, space]])
+    JSON11.stringify(value[, replacer[, space[, options]]])
     JSON11.stringify(value[, options])
 
 #### Parameters
@@ -151,7 +158,6 @@ properties if a replacer array is specified.
   indicate that no space should be used. If this is a String, the string (or the
   first 10 characters of the string, if it's longer than that) is used as white
   space. If this parameter is not provided (or is null), no white space is used.
-  If white space is used, trailing commas will be used in objects and arrays.
 - `options`: An object with the following properties:
   - `replacer`: Same as the `replacer` parameter.
   - `space`: Same as the `space` parameter.
@@ -159,6 +165,8 @@ properties if a replacer array is specified.
     strings.
   - `quoteNames`: (false) Force wrapping property names in quotes.
   - `withBigInt`: (true) Serialize BigInt values with the 'n' suffix
+  - `trailingComma`: (false) Add a trailing comma to arrays and objects; applies
+    only when `space` is set.
 
 #### Return value
 A JSON11 string representing the value.
@@ -175,12 +183,13 @@ npm install --global json11
 
 ### Usage
 ```sh
-json5 [options] <file>
+json11 [options] <file>
 ```
 
 If `<file>` is not provided, then STDIN is used.
 
 #### Options:
+- `-c`, `--convert`: Convert `<file>` to JSON, writing alongside it as `<file>.json`
 - `-s`, `--space`: The number of spaces to indent or `t` for tabs
 - `-o`, `--out-file [file]`: Output to the specified file, otherwise STDOUT
 - `-v`, `--validate`: Validate JSON11 but do not output JSON
