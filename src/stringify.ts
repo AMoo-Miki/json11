@@ -1,4 +1,7 @@
-import * as util from './util';
+import { buildQuoteReplacements, nulFollowedByDigitReplacement } from './escapes';
+import { quoteString, serializeKey, QuoteContext } from './serializeShared';
+import { RawString, RawValue } from './raw';
+import { serializeToBytes } from './stringifyBytes';
 
 export type AllowList = (string | number)[];
 export type Replacer = (this: any, key: string, value: any) => any;
@@ -21,6 +24,12 @@ export type Stringify11Options = StringifyQuoteOptions & {
    * When undefined or false, \v, \0, and \x0-\x19 will be serialized as \u000b, \u0000, and \u0000-\u0019
    */
   withLegacyEscapes?: boolean,
+  /* Byte-mode output. When true, `stringify` returns a Uint8Array instead of a
+   * string, and recognizes `RawValue`/`RawString` nodes which it injects as raw
+   * bytes (pre-escaped, spliced verbatim, or escaped from raw bytes) so a secret
+   * can reach the output buffer without ever becoming a JS String.
+   */
+  raw?: boolean,
 };
 export type StringifyOptions = Stringify11Options & {
   replacer?: Replacer | AllowList | null,
@@ -29,8 +38,20 @@ export type StringifyOptions = Stringify11Options & {
 
 export function stringify(
   value: any,
+  options: StringifyOptions & { raw: true },
+): Uint8Array | undefined;
+
+export function stringify(
+  value: any,
   options?: StringifyOptions,
 ): string | undefined;
+
+export function stringify(
+  value: any,
+  replacer: Replacer | null | undefined,
+  space: string | number | String | Number | null | undefined,
+  options: Stringify11Options & { raw: true },
+): Uint8Array | undefined;
 
 export function stringify(
   value: any,
@@ -38,6 +59,13 @@ export function stringify(
   space?: string | number | String | Number | null,
   options?: Stringify11Options,
 ): string | undefined;
+
+export function stringify(
+  value: any,
+  allowList: AllowList,
+  space: string | number | String | Number | null | undefined,
+  options: Stringify11Options & { raw: true },
+): Uint8Array | undefined;
 
 export function stringify(
   value: any,
@@ -51,7 +79,7 @@ export function stringify(
   replacerOrAllowListOrOptions?: Replacer | StringifyOptions | AllowList | null,
   space?: string | number | String | Number | null,
   options?: Stringify11Options,
-): string | undefined {
+): string | undefined | Uint8Array {
   const stack: any[] = [];
   let indent = '';
   let propertyList: string[] | undefined;
@@ -60,8 +88,9 @@ export function stringify(
   let quote: string | undefined;
   let withBigInt: boolean | undefined;
   let withLegacyEscapes: boolean | undefined;
-  let nameSerializer: Function = serializeKey;
+  let quoteNames: boolean = false;
   let trailingComma: string = '';
+  let raw: boolean = false;
 
   const quoteWeights: Record<string, number> = {
     '\'': 0.1,
@@ -80,13 +109,14 @@ export function stringify(
     }
     quote = replacerOrAllowListOrOptions.quote?.trim?.();
     if (replacerOrAllowListOrOptions.quoteNames === true) {
-      nameSerializer = quoteString;
+      quoteNames = true;
     }
     if (typeof replacerOrAllowListOrOptions.replacer === 'function') {
       replacer = replacerOrAllowListOrOptions.replacer;
     }
     withBigInt = replacerOrAllowListOrOptions.withBigInt;
     withLegacyEscapes = replacerOrAllowListOrOptions.withLegacyEscapes === true;
+    raw = replacerOrAllowListOrOptions.raw === true;
   } else {
     if (
       // replacerOrAllowListOrOptions is Replacer
@@ -109,30 +139,41 @@ export function stringify(
     gap = getGap(space);
     quote = options?.quote?.trim?.();
     if (options?.quoteNames === true) {
-      nameSerializer = quoteString;
+      quoteNames = true;
     }
     withBigInt = options?.withBigInt;
     withLegacyEscapes = options?.withLegacyEscapes === true;
     if (options?.trailingComma) {
       trailingComma = ',';
     }
+    raw = options?.raw === true;
   }
 
-  const quoteReplacements: { [key: string]: string } = {
-    '\'': '\\\'',
-    '"': '\\"',
-    '\\': '\\\\',
-    '\b': '\\b',
-    '\f': '\\f',
-    '\n': '\\n',
-    '\r': '\\r',
-    '\t': '\\t',
-    '\v': withLegacyEscapes ? '\\v' : '\\u000b',
-    '\0': withLegacyEscapes ? '\\0' : '\\u0000',
-    '\u2028': '\\u2028',
-    '\u2029': '\\u2029',
+  const quoteReplacements = buildQuoteReplacements(withLegacyEscapes);
+  const quoteReplacementForNulFollowedByDigit = nulFollowedByDigitReplacement(withLegacyEscapes);
+
+  const quoteContext: QuoteContext = {
+    quoteWeights,
+    quote,
+    quoteReplacements,
+    nulFollowedByDigit: quoteReplacementForNulFollowedByDigit,
+    withLegacyEscapes,
   };
-  const quoteReplacementForNulFollowedByDigit = withLegacyEscapes ? '\\x00' : '\\u0000';
+
+  const nameSerializer = (key: string): string =>
+    quoteNames ? quoteString(key, quoteContext) : serializeKey(key, quoteContext);
+
+  if (raw) {
+    return serializeToBytes(value, {
+      gap,
+      trailingComma,
+      quoteContext,
+      quoteNames,
+      replacer,
+      propertyList,
+      withBigInt,
+    });
+  }
 
   return serializeProperty('', { '': value });
 
@@ -151,6 +192,11 @@ export function stringify(
 
   function serializeProperty(key: string, holder: any): string | undefined {
     let value = holder[key];
+
+    if (value instanceof RawValue || value instanceof RawString) {
+      throw new TypeError('JSON11: RawValue/RawString can only be serialized in byte mode; use stringify(value, { raw: true })');
+    }
+
     if (value != null) {
       if (typeof value.toJSON11 === 'function') {
         value = value.toJSON11(key);
@@ -183,7 +229,7 @@ export function stringify(
     }
 
     if (typeof value === 'string') {
-      return quoteString(value);
+      return quoteString(value, quoteContext);
     }
 
     if (typeof value === 'number') {
@@ -199,48 +245,6 @@ export function stringify(
     }
 
     return undefined;
-  }
-
-  function quoteString(value: string): string {
-    let product = '';
-
-    for (let i = 0; i < value.length; i++) {
-      const c = value[i];
-      switch (c) {
-        case '\'':
-        case '"':
-          quoteWeights[c]++;
-          product += c;
-          continue;
-
-        case '\0':
-          if (util.isDigit(value[i + 1])) {
-            product += quoteReplacementForNulFollowedByDigit;
-            continue;
-          }
-      }
-
-      if (quoteReplacements[c]) {
-        product += quoteReplacements[c];
-        continue;
-      }
-
-      if (c < ' ') {
-        let hexString = c.charCodeAt(0).toString(16);
-        product += withLegacyEscapes
-          ? '\\x' + ('00' + hexString).substring(hexString.length)
-          : '\\u' + hexString.padStart(4, '0');
-        continue;
-      }
-
-      product += c;
-    }
-
-    const quoteChar = quote || Object.keys(quoteWeights).reduce((a, b) => (quoteWeights[a] < quoteWeights[b]) ? a : b);
-
-    product = product.replace(new RegExp(quoteChar, 'g'), quoteReplacements[quoteChar]);
-
-    return quoteChar + product + quoteChar;
   }
 
   function serializeObject(value: any): string {
@@ -284,25 +288,6 @@ export function stringify(
     stack.pop();
     indent = stepback;
     return final;
-  }
-
-  function serializeKey(key: string): string {
-    if (key.length === 0) {
-      return quoteString(key);
-    }
-
-    const firstChar = String.fromCodePoint(key.codePointAt(0)!);
-    if (!util.isIdStartChar(firstChar)) {
-      return quoteString(key);
-    }
-
-    for (let i = firstChar.length; i < key.length; i++) {
-      if (!util.isIdContinueChar(String.fromCodePoint(key.codePointAt(i)!))) {
-        return quoteString(key);
-      }
-    }
-
-    return key;
   }
 
   function serializeArray(value: any[]): string {

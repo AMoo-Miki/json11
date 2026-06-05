@@ -25,6 +25,8 @@
     "lint": "eslint .",
     "lint-fix": "eslint --fix .",
     "test": "vitest --run",
+    "test:heap": "NODE_OPTIONS=--expose-gc vitest --run test/heapHygiene.test.ts",
+    "bench": "vitest bench --run",
     "prepublishOnly": "npm i && npm run test && npm run lint && npm run build"
   },
   "repository": {

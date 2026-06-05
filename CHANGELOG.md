@@ -1,8 +1,9 @@
 # JSON11 Changelog
 
 JSON11 is an independent JSON parser/serializer. It originated as a fork of
-[JSON5] but has diverged into its own library — adding BigInt support — and is
-versioned and released independently, starting at 3.0.0.
+[JSON5] but has diverged into its own library — adding BigInt support and a
+byte-preserving parse/serialize mode (borrowed value spans) — and is versioned
+and released independently, starting at 3.0.0.
 
 History before 3.0.0 belongs to JSON5 and is not duplicated here; see the
 [JSON5 changelog] for it.
@@ -21,6 +22,21 @@ The first independent JSON11 release (forked from JSON5 v2.2.3).
 
 ### Added
 
+- **Byte mode** — secret-preserving parse/serialize. Additive and opt-in, with no
+  new runtime dependencies and no change to the existing string APIs.
+  - `parse(Uint8Array, …)` parses JSON11 directly from UTF-8 bytes
+    (`Uint8Array`/`Buffer`) via a bounds-checked byte parser, differential- and
+    fuzz-tested against the string parser.
+  - `parse(bytes, …, { raw: 'values' })` returns string values as borrowed
+    `RawString` spans — escaped `span()`/`copy()` and decoded `decode()` bytes —
+    without ever materializing a `String` (`toString()` stays opt-in). Keys remain
+    JS strings, so `raw: 'all'` currently aliases `'values'`.
+  - `stringify(value, { raw: true })` returns a `Uint8Array` and injects
+    `RawValue.escaped(span, quote)` (verbatim, byte-identical) or
+    `RawValue.raw(bytes)` (escaped by JSON11) so values can reach the output
+    buffer without becoming a `String`.
+  - New `RawString` and `RawValue` exports; parser- and serializer-side escaping
+    share one engine so lifted spans round-trip byte-identically.
 - **BigInt** parsing and serialization.
 - **ESM and UMD** build assets.
 

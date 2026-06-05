@@ -83,14 +83,14 @@ npm install json11
 #### CommonJS
 ```js
 const JSON11 = require('json11')
-// named exports also work: const { parse, stringify } = require('json11')
+// named exports also work: const { parse, stringify, RawString, RawValue } = require('json11')
 ```
 
 #### Modules
 ```js
 import JSON11 from 'json11'
 // or namespace: import * as JSON11 from 'json11'
-// or named:     import { parse, stringify } from 'json11'
+// or named:     import { parse, stringify, RawString, RawValue } from 'json11'
 ```
 
 > All import styles are supported: default (`import JSON11 from 'json11'`),
@@ -126,14 +126,21 @@ transformation on the resulting object before it is returned.
     JSON11.parse(text[, reviver, [options]])
 
 #### Parameters
-- `text`: The string to parse as JSON11.
+- `text`: The JSON11 document to parse. This may be a `string`, **or** a
+  `Uint8Array`/`Buffer` of UTF-8 bytes (see [Byte mode](#byte-mode-borrowed-value-spans)).
 - `reviver`: If a function, this prescribes how the value originally produced by
   parsing is transformed, before being returned.
 - `options`: An object with the following properties:
   - `withLongNumerals`: (false) To parse integers beyond safe limits as BigInt.
+  - `raw`: (`'off'`) Borrowed-span byte mode. Only valid when `text` is a
+    `Uint8Array`. `'values'` returns string **values** as borrowed `RawString`
+    spans instead of JS strings (object keys are still decoded to strings);
+    `'all'` is currently an alias of `'values'`. Passing `raw: 'values'`/`'all'`
+    with a `string` input throws a `TypeError`.
 
 #### Return value
-The object corresponding to the given JSON11 text.
+The object corresponding to the given JSON11 text. In `raw` mode, string values
+are `RawString` instances rather than JS strings.
 
 ### JSON11.stringify()
 Converts a JavaScript value to a JSON11 string, optionally replacing values if a
@@ -167,9 +174,100 @@ properties if a replacer array is specified.
   - `withBigInt`: (true) Serialize BigInt values with the 'n' suffix
   - `trailingComma`: (false) Add a trailing comma to arrays and objects; applies
     only when `space` is set.
+  - `withLegacyEscapes`: (false) Emit JSON5-style `\v`, `\0`, and `\x..` escapes.
+  - `raw`: (false) Byte mode. When `true`, `stringify` returns a `Uint8Array` of
+    UTF-8 bytes instead of a string, and recognizes `RawValue`/`RawString` nodes
+    that are injected into the output without becoming JS strings (see
+    [Byte mode](#byte-mode-borrowed-value-spans)).
 
 #### Return value
-A JSON11 string representing the value.
+A JSON11 string representing the value, or a `Uint8Array` when `raw: true`.
+`RawValue`/`RawString` nodes passed to the default (string) mode throw a
+`TypeError`.
+
+
+## Byte mode (borrowed value spans)
+
+Byte mode lets you parse JSON11 **directly from bytes** and serialize **directly
+to bytes**, and — crucially for secret-handling — lets you move a string value
+from one document to another **without ever materializing it as a JavaScript
+`String`**. JS strings are immutable and GC-managed: once a secret becomes a
+`String` you cannot zero it, and copies may linger on the heap. Byte mode keeps
+sensitive values as bytes you control.
+
+This is purely additive. The existing `parse(string)` and `stringify(): string`
+behavior is unchanged; byte mode is opt-in via the `raw` option and the
+`Uint8Array` input/output overloads. There are no new runtime dependencies.
+
+### Reading values as bytes
+
+```js
+import { parse, RawString } from 'json11'
+
+const bytes = new TextEncoder().encode('{"subkey":"S3cr3t\\u0041","meta":"ok"}')
+const doc = parse(bytes, null, { raw: 'values' })
+
+doc.meta              // RawString
+doc.meta.toString()   // 'ok'  (safe: not a secret)
+
+const v = doc.subkey  // RawString — the secret never became a String
+v.span()              // Uint8Array view of the *escaped* inner bytes ("S3cr3t\u0041"),
+                      //   aliasing the input buffer (zero-copy)
+v.copy()              // Uint8Array, a fresh copy of those escaped bytes
+v.decode()            // Uint8Array of the *decoded* value bytes ("S3cr3tA"), never a String
+// v.toString()       // ONLY for non-secrets: this materializes a JS String
+```
+
+- `span()` returns a `subarray` view that aliases the input buffer. Do not mutate
+  it, and copy it (or `decode()` it) before you zero the input buffer.
+- `decode()` performs full JSON11 string unescaping (`\uXXXX`, surrogate pairs,
+  `\xNN`, line continuations, …) and returns fresh UTF-8 bytes — never a String.
+- `RawString.decodeBytes(buf, start, end[, quote])` is a static helper to decode
+  an inner span you obtained elsewhere.
+- Object **keys** are always JS strings (JS objects require string keys), so
+  `raw: 'all'` currently behaves like `raw: 'values'`.
+
+### Writing values from bytes
+
+`stringify(..., { raw: true })` returns a `Uint8Array`. To inject a value as
+bytes, wrap it in a `RawValue`:
+
+```js
+import { stringify, RawValue } from 'json11'
+
+// (a) Splice an already-escaped span verbatim — byte-identical, no re-escaping.
+//     Ideal for moving a borrowed span between documents without touching the secret.
+const out1 = stringify(
+  { moved: RawValue.escaped(doc.subkey.span(), doc.subkey.quote) },
+  { raw: true },
+)
+
+// (b) Hand JSON11 raw (unescaped) value bytes; JSON11 escapes them itself.
+const out2 = stringify(
+  { token: RawValue.raw(new TextEncoder().encode("a secret with 'quotes'")) },
+  { raw: true },
+)
+```
+
+A `RawString` (from a raw-mode parse) can also be placed directly into the value
+tree in byte mode; it is injected by its escaped span.
+
+### Security posture
+
+- **Hostile-input safe parsing.** The byte parser is bounds-checked and is
+  covered by extensive negative, adversarial, differential, and fuzz tests
+  (random buffers, single-byte mutations, truncations, malformed UTF-8 including
+  overlong forms and encoded surrogates, adversarial escape fragments). Any
+  malformed input throws a typed `SyntaxError`; misuse throws `TypeError`. No
+  input causes an out-of-bounds read, hang, or partial/garbage value.
+- **No accidental `String` materialization.** Secrets stay as `Uint8Array`s
+  through parse → extract → re-serialize. A `String` is only ever produced if you
+  explicitly call `RawString.toString()`.
+- **Escape consistency by construction.** Parser-side and serializer-side escape
+  handling share one engine, so a span lifted from one JSON11 document and
+  spliced into another round-trips byte-identically.
+- **Caller owns buffer lifetime.** `span()` aliases your input buffer; you are
+  responsible for zeroing input/output buffers when done.
 
 
 ## CLI

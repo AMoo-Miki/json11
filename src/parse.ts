@@ -1,4 +1,7 @@
 import * as util from './util';
+import { parseBytes } from './parseBytes';
+
+export type Reviver = (this: any, key: string, value: any) => any;
 
 export type Parse11Options = {
   /* Allow parsing long numeric values as BigInt.
@@ -6,14 +9,44 @@ export type Parse11Options = {
    *     are converted to BigInt.
    * When undefined or false, they are handled just like JSON and loose precision.
    */
-  withLongNumerals?: boolean
+  withLongNumerals?: boolean,
+  /* Borrowed-span / byte-mode extraction. Only valid when `text` is a
+   * Uint8Array (byte input); passing a string with 'values'/'all' is both a
+   * type error and a runtime error, because the secret would already be a String.
+   *   'off'    (default) decode every string to a JS String.
+   *   'values' string *values* are returned as borrowed `RawString` spans;
+   *            object keys are still decoded to JS strings.
+   *   'all'    alias of 'values' (JS object keys must be strings, so keys are
+   *            always decoded; see README).
+   */
+  raw?: 'off' | 'values' | 'all',
 }
 
 export function parse<T = any>(
   text: string,
-  reviver?: ((this: any, key: string, value: any) => any) | null,
+  reviver?: Reviver | null,
+  options?: Parse11Options & { raw?: 'off' },
+): T;
+export function parse<T = any>(
+  text: Uint8Array,
+  reviver?: Reviver | null,
+  options?: Parse11Options,
+): T;
+export function parse<T = any>(
+  text: string | Uint8Array,
+  reviver?: Reviver | null,
   options?: Parse11Options,
 ): T {
+  if (text instanceof Uint8Array) {
+    return parseBytes<T>(text, reviver, options);
+  }
+
+  if (options?.raw === 'values' || options?.raw === 'all') {
+    throw new TypeError(
+      'JSON11: parse \'raw\' mode requires Uint8Array input; a string value cannot be borrowed without first materializing it as a String',
+    );
+  }
+
   let source: string = String(text);
   let parseState: string = 'start';
   let stack: any[] = [];

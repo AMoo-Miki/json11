@@ -1,0 +1,364 @@
+/* Borrowed value spans and raw-byte injection for JSON11 byte-mode.
+ *
+ * `RawString` is the borrowed-span node returned by `parse(bytes, …, { raw })`:
+ * it aliases the input buffer and exposes a chosen string value's bytes without
+ * ever constructing a GC-managed JS String (`span`/`copy`/`decode`). It only
+ * materializes a String if the caller explicitly asks via `toString`.
+ *
+ * `RawValue` is the tagged wrapper the byte serializer injects verbatim
+ * (pre-escaped) or escapes itself (raw bytes), so a secret can reach the output
+ * buffer without becoming a String.
+ *
+ * Both sit on one shared escape engine (`walkString`) so parser-side and
+ * serializer-side escape handling are mutually consistent by construction.
+ */
+
+import { ByteWriter, decodeUtf8 } from './bytes';
+
+export const QUOTE_DOUBLE = 0x22;
+export const QUOTE_SINGLE = 0x27;
+const BACKSLASH = 0x5c;
+const LF = 0x0a;
+const CR = 0x0d;
+
+// ignoreBOM: true is essential — without it TextDecoder strips a leading U+FEFF
+// from every decoded run, dropping BOMs that the string parser preserves.
+const textDecoder = new TextDecoder('utf-8', { ignoreBOM: true });
+
+export type QuoteByte = 0x22 | 0x27;
+
+export class JSON11ByteError extends SyntaxError {
+  readonly offset: number;
+  constructor(message: string, offset: number) {
+    super(`JSON11: ${message} at byte ${offset}`);
+    this.name = 'JSON11ByteError';
+    this.offset = offset;
+  }
+}
+
+export function byteError(message: string, offset: number): JSON11ByteError {
+  return new JSON11ByteError(message, offset);
+}
+
+/* A sink consumes the decoded content of a JSON string: verbatim source runs
+ * plus escape-produced code points. The same walk drives a String-building sink,
+ * a byte-building sink, and a validate-only (null) sink.
+ */
+interface Sink {
+  literalRun(start: number, end: number): void;
+  codePoint(cp: number): void;
+}
+
+const NULL_SINK: Sink = {
+  literalRun() {},
+  codePoint() {},
+};
+
+class StringSink implements Sink {
+  private str = '';
+  constructor(private readonly source: Uint8Array) {}
+  literalRun(start: number, end: number): void {
+    this.str += textDecoder.decode(this.source.subarray(start, end));
+  }
+  codePoint(cp: number): void {
+    this.str += String.fromCodePoint(cp);
+  }
+  result(): string {
+    return this.str;
+  }
+}
+
+class ByteSink implements Sink {
+  private readonly writer = new ByteWriter();
+  private pendingHigh = -1;
+  constructor(private readonly source: Uint8Array) {}
+  literalRun(start: number, end: number): void {
+    this.flushPending();
+    this.writer.pushBytes(this.source, start, end);
+  }
+  codePoint(cp: number): void {
+    if (this.pendingHigh >= 0) {
+      if (cp >= 0xdc00 && cp <= 0xdfff) {
+        const astral = (this.pendingHigh - 0xd800) * 0x400 + (cp - 0xdc00) + 0x10000;
+        this.pendingHigh = -1;
+        this.writer.pushCodePoint(astral);
+        return;
+      }
+      this.writer.pushCodePoint(0xfffd);
+      this.pendingHigh = -1;
+    }
+    if (cp >= 0xd800 && cp <= 0xdbff) {
+      this.pendingHigh = cp;
+      return;
+    }
+    this.writer.pushCodePoint(cp);
+  }
+  private flushPending(): void {
+    if (this.pendingHigh >= 0) {
+      this.writer.pushCodePoint(0xfffd);
+      this.pendingHigh = -1;
+    }
+  }
+  result(): Uint8Array {
+    this.flushPending();
+    return this.writer.toUint8Array();
+  }
+}
+
+function hexValue(b: number): number {
+  if (b >= 0x30 && b <= 0x39) return b - 0x30;
+  if (b >= 0x61 && b <= 0x66) return b - 0x61 + 10;
+  if (b >= 0x41 && b <= 0x46) return b - 0x41 + 10;
+  return -1;
+}
+
+function readHex(source: Uint8Array, start: number, count: number, limit: number): { value: number; next: number } {
+  let value = 0;
+  let i = start;
+  for (let k = 0; k < count; k++) {
+    if (i >= limit) {
+      throw byteError('truncated unicode/hex escape', i);
+    }
+    const d = hexValue(source[i]);
+    if (d < 0) {
+      throw byteError('invalid hex digit in escape', i);
+    }
+    value = value * 16 + d;
+    i++;
+  }
+  return { value, next: i };
+}
+
+/* Handle the escape sequence whose backslash was at `i - 1` (so `i` points at
+ * the escape selector). Emits to `sink` and returns the index just past the
+ * sequence. Bounded by `limit`. Mirrors the existing string parser's `escape`.
+ */
+function handleEscape(source: Uint8Array, i: number, limit: number, sink: Sink): number {
+  if (i >= limit) {
+    throw byteError('lone trailing backslash in string', i);
+  }
+  const e = source[i];
+  switch (e) {
+    case 0x62: sink.codePoint(0x08); return i + 1; // \b
+    case 0x66: sink.codePoint(0x0c); return i + 1; // \f
+    case 0x6e: sink.codePoint(0x0a); return i + 1; // \n
+    case 0x72: sink.codePoint(0x0d); return i + 1; // \r
+    case 0x74: sink.codePoint(0x09); return i + 1; // \t
+    case 0x76: sink.codePoint(0x0b); return i + 1; // \v
+    case 0x30: { // \0 (not followed by a decimal digit)
+      if (i + 1 < limit && source[i + 1] >= 0x30 && source[i + 1] <= 0x39) {
+        throw byteError('invalid \\0 escape followed by digit', i + 1);
+      }
+      sink.codePoint(0x00);
+      return i + 1;
+    }
+    case 0x78: { // \xHH
+      const { value, next } = readHex(source, i + 1, 2, limit);
+      sink.codePoint(value);
+      return next;
+    }
+    case 0x75: { // \uHHHH
+      const { value, next } = readHex(source, i + 1, 4, limit);
+      sink.codePoint(value);
+      return next;
+    }
+    case LF:
+      return i + 1; // line continuation
+    case CR:
+      if (i + 1 < limit && source[i + 1] === LF) return i + 2;
+      return i + 1; // line continuation (CR or CRLF)
+    case 0x31: case 0x32: case 0x33: case 0x34: case 0x35:
+    case 0x36: case 0x37: case 0x38: case 0x39:
+      throw byteError('invalid escape sequence (digit)', i);
+    default: {
+      if (e >= 0x80) {
+        let dec;
+        try {
+          dec = decodeUtf8(source, i, limit);
+        } catch (ex) {
+          throw byteError((ex as Error).message, i);
+        }
+        if (!dec) {
+          throw byteError('lone trailing backslash in string', i);
+        }
+        if (dec.cp === 0x2028 || dec.cp === 0x2029) {
+          return i + dec.size; // line continuation
+        }
+        sink.literalRun(i, i + dec.size); // unnecessary escape of a multibyte char
+        return i + dec.size;
+      }
+      sink.literalRun(i, i + 1); // unnecessary escape of an ASCII char
+      return i + 1;
+    }
+  }
+}
+
+/* Walk the body of a JSON11 string starting at `start` (just past the opening
+ * quote), feeding `sink`. Stops at an unescaped `quote` byte (returns its index)
+ * or at `limit`. When `requireQuote` is true (parsing), reaching `limit` without
+ * the closing quote is an unterminated-string error; when false (decoding a
+ * known inner range), reaching `limit` is the normal stop.
+ *
+ * Throws a typed `JSON11ByteError` on any malformed input — unterminated string,
+ * raw newline, bad escape, lone trailing backslash, malformed UTF-8 — and never
+ * reads past `limit`.
+ */
+function walkString(
+  source: Uint8Array,
+  start: number,
+  quote: number,
+  sink: Sink,
+  limit: number,
+  requireQuote: boolean,
+  onSeparator?: () => void,
+): number {
+  let i = start;
+  let runStart = start;
+
+  while (i < limit) {
+    const b = source[i];
+
+    if (b === quote) {
+      if (i > runStart) sink.literalRun(runStart, i);
+      return i;
+    }
+
+    if (b === BACKSLASH) {
+      if (i > runStart) sink.literalRun(runStart, i);
+      i = handleEscape(source, i + 1, limit, sink);
+      runStart = i;
+      continue;
+    }
+
+    if (b === LF || b === CR) {
+      throw byteError('unescaped newline in string', i);
+    }
+
+    if (b < 0x80) {
+      i++;
+      continue;
+    }
+
+    let dec;
+    try {
+      dec = decodeUtf8(source, i, limit);
+    } catch (ex) {
+      throw byteError((ex as Error).message, i);
+    }
+    if (!dec) break;
+    if (dec.cp === 0x2028 || dec.cp === 0x2029) {
+      if (onSeparator) onSeparator();
+    }
+    i += dec.size;
+  }
+
+  if (requireQuote) {
+    throw byteError('unterminated string', i);
+  }
+  if (i > runStart) sink.literalRun(runStart, i);
+  return i;
+}
+
+/* Used by the byte parser: scan a string value/key starting just past the
+ * opening quote, returning the index of the closing quote. With a non-null
+ * `sink` (off-mode / keys) the decoded JS string is produced; with the null sink
+ * (raw values) it validates only. */
+export function scanStringForParse(
+  source: Uint8Array,
+  start: number,
+  quote: number,
+  collect: boolean,
+  onSeparator?: () => void,
+): { innerEnd: number; value?: string } {
+  if (collect) {
+    const sink = new StringSink(source);
+    const innerEnd = walkString(source, start, quote, sink, source.length, true, onSeparator);
+    return { innerEnd, value: sink.result() };
+  }
+  const innerEnd = walkString(source, start, quote, NULL_SINK, source.length, true, onSeparator);
+  return { innerEnd };
+}
+
+/* A borrowed view over one JSON string value's escaped inner bytes. Aliases the
+ * input buffer; the caller owns that buffer's lifetime and zeroing. */
+export class RawString {
+  /* The input buffer this value is borrowed from (aliased, not copied). */
+  readonly source: Uint8Array;
+  /* Inner byte offset just past the opening quote. */
+  readonly start: number;
+  /* Inner byte offset of the closing quote (exclusive end of the value). */
+  readonly end: number;
+  /* The quote byte the value was written with (0x22 `"` or 0x27 `'`). */
+  readonly quote: QuoteByte;
+
+  constructor(source: Uint8Array, start: number, end: number, quote: QuoteByte) {
+    this.source = source;
+    this.start = start;
+    this.end = end;
+    this.quote = quote;
+  }
+
+  /* (2a) Zero-copy view of the escaped inner bytes between the quotes. Aliases
+   * the input buffer — do not mutate, and copy before the input is zeroed. */
+  span(): Uint8Array {
+    return this.source.subarray(this.start, this.end);
+  }
+
+  /* (2a) A fresh copy of the escaped inner bytes (safe to retain). */
+  copy(): Uint8Array {
+    return this.source.slice(this.start, this.end);
+  }
+
+  /* (2b) The decoded (unescaped) value as fresh UTF-8 bytes. Never constructs a
+   * JS String. Lone surrogate escapes are emitted as U+FFFD. */
+  decode(): Uint8Array {
+    return RawString.decodeBytes(this.source, this.start, this.end, this.quote);
+  }
+
+  /* Lazily decode to a JS String. SECURITY: never call this for a secret value —
+   * it materializes the value on the V8 heap where it cannot be zeroed. */
+  toString(): string {
+    const sink = new StringSink(this.source);
+    walkString(this.source, this.start, this.quote, sink, this.end, false);
+    return sink.result();
+  }
+
+  /* Low-level byte-level JSON11 string unescape over an explicit inner range,
+   * folded in as a static so spans obtained elsewhere can be decoded too. Never
+   * constructs a String. */
+  static decodeBytes(buf: Uint8Array, start: number, end: number, quote: QuoteByte = QUOTE_DOUBLE): Uint8Array {
+    const sink = new ByteSink(buf);
+    walkString(buf, start, quote, sink, end, false);
+    return sink.result();
+  }
+}
+
+/* A tagged value the byte serializer injects without it ever becoming a String:
+ * either pre-escaped inner bytes spliced verbatim between quotes, or raw
+ * (unescaped) bytes that JSON11 escapes into the output using its own escaper. */
+export class RawValue {
+  /* @internal */ readonly bytes: Uint8Array;
+  /* @internal */ readonly preEscaped: boolean;
+  /* @internal */ readonly quote: QuoteByte | 0;
+
+  private constructor(bytes: Uint8Array, preEscaped: boolean, quote: QuoteByte | 0) {
+    this.bytes = bytes;
+    this.preEscaped = preEscaped;
+    this.quote = quote;
+  }
+
+  /* Splice already-escaped inner bytes verbatim, wrapped in `quote`. Use this to
+   * move an escaped span lifted from a JSON11 document (bar #4: byte-identical). */
+  static escaped(inner: Uint8Array, quote: QuoteByte): RawValue {
+    if (quote !== QUOTE_DOUBLE && quote !== QUOTE_SINGLE) {
+      throw new TypeError('JSON11: RawValue.escaped quote must be 0x22 (") or 0x27 (\')');
+    }
+    return new RawValue(inner, true, quote);
+  }
+
+  /* Hand JSON11 raw (unescaped) value bytes; the serializer escapes them into the
+   * output buffer using its own escaper. */
+  static raw(bytes: Uint8Array): RawValue {
+    return new RawValue(bytes, false, 0);
+  }
+}
