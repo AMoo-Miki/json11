@@ -11,7 +11,7 @@
 
 import * as util from './util';
 import { decodeUtf8 } from './bytes';
-import { byteError, QuoteByte, RawString, scanStringForParse } from './raw';
+import { byteError, type QuoteByte, RawString, scanStringForParse } from './raw';
 
 export type RawMode = 'off' | 'values' | 'all';
 
@@ -763,7 +763,8 @@ export function parseBytes<T = any>(
     try {
       dec = decodeUtf8(source, pos);
     } catch (ex) {
-      throw byteError((ex as Error).message, pos);
+      const msg = ex instanceof Error ? ex.message : String(ex);
+      throw byteError(msg, pos);
     }
     if (!dec) {
       return undefined;
@@ -780,7 +781,8 @@ export function parseBytes<T = any>(
     try {
       dec = decodeUtf8(source, pos);
     } catch (ex) {
-      throw byteError((ex as Error).message, pos);
+      const msg = ex instanceof Error ? ex.message : String(ex);
+      throw byteError(msg, pos);
     }
     if (!dec) {
       column++;
@@ -801,7 +803,7 @@ export function parseBytes<T = any>(
   /* Consume an opening quote (already the current char), then scan the whole
    * string value/key via the shared escape engine. Advances `pos` past the
    * closing quote and returns the token. */
-  function scanStringToken(quoteByte: number, collect: boolean): any {
+  function scanStringToken(quoteByte: QuoteByte, collect: boolean): any {
     read(); // consume opening quote
     const startInner = pos;
     const res = scanStringForParse(source, pos, quoteByte, collect, separatorWarn);
@@ -811,7 +813,7 @@ export function parseBytes<T = any>(
     if (collect) {
       return newToken('string', res.value);
     }
-    return newToken('string', new RawString(source, startInner, res.innerEnd, quoteByte as QuoteByte));
+    return newToken('string', new RawString(source, startInner, res.innerEnd, quoteByte));
   }
 
   function newToken(type: string, value?: any): any {

@@ -1,5 +1,5 @@
 import { buildQuoteReplacements, nulFollowedByDigitReplacement } from './escapes';
-import { quoteString, serializeKey, QuoteContext } from './serializeShared';
+import { quoteString, serializeKey, type QuoteContext } from './serializeShared';
 import { RawString, RawValue } from './raw';
 import { serializeToBytes } from './stringifyBytes';
 import * as util from './util';

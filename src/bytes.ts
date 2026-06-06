@@ -111,7 +111,7 @@ export class ByteWriter {
 /* The number of bytes in the UTF-8 sequence whose lead byte is `b`, or 0 if `b`
  * is not a valid UTF-8 lead byte (continuation byte, or 0xF8-0xFF).
  */
-export function utf8SequenceLength(b: number): number {
+function utf8SequenceLength(b: number): number {
   if (b < 0x80) return 1;
   if (b < 0xc0) return 0; // continuation byte cannot start a sequence
   if (b < 0xe0) return 2;

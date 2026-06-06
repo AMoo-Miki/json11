@@ -2,7 +2,15 @@ import { expect, describe, it } from 'vitest';
 import { parse, stringify, RawString, RawValue } from '../src';
 import { dec, enc, makeRng, randString, randValue } from './_helpers';
 
-const bytes = (v: any, ...args: any[]): Uint8Array => (stringify as any)(v, ...args) as Uint8Array;
+/* Differential harness that drives the byte serializer through every positional
+ * form the public overloads accept: the two-arg `(value, options)` shape and the
+ * four-arg `(value, replacer|allowList, space, options)` shape. Each form is
+ * dispatched to the typed `raw: true` overload (no `as any`), so a regression in
+ * the `raw: true -> Uint8Array` overload discrimination fails to typecheck here. */
+const bytes = (v: any, ...args: any[]): Uint8Array =>
+  (args.length === 1
+    ? stringify(v, args[0] as { raw: true })
+    : stringify(v, args[0], args[1], args[2] as { raw: true }))!;
 
 describe('stringify(value, { raw: true }) — byte output equals utf8(string output)', () => {
   it('matches for primitives and structures', () => {

@@ -9,7 +9,7 @@
  */
 
 import * as util from './util';
-import { controlEscape, QuoteReplacements } from './escapes';
+import { controlEscape, type QuoteReplacements } from './escapes';
 
 export type QuoteContext = {
   quoteWeights: Record<string, number>;

@@ -80,3 +80,9 @@ a byte-mode feature, (2) it is proven behavior-identical by the existing
 differential + spec suites, and (3) the owner signs off in the same way a string
 bug fix is sanctioned. A byte-mode change that *seems* to need a string-path edit
 is still the stop-and-surface signal the original rule describes.
+
+A second, lighter touch was taken under the same provision: marking the
+`QuoteContext` import in `stringify.ts` as a `type`-only import. TypeScript erases
+it, so the emitted JS is byte-for-byte unchanged — no behavior to preserve, only
+import hygiene. Recorded here for the same reason the perf refactor is: any edit
+to a frozen file is surfaced, even one that cannot change runtime behavior.

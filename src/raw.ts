@@ -185,7 +185,8 @@ function handleEscape(source: Uint8Array, i: number, limit: number, sink: Sink):
         try {
           dec = decodeUtf8(source, i, limit);
         } catch (ex) {
-          throw byteError((ex as Error).message, i);
+          const msg = ex instanceof Error ? ex.message : String(ex);
+          throw byteError(msg, i);
         }
         if (!dec) {
           throw byteError('lone trailing backslash in string', i);
@@ -252,7 +253,8 @@ function walkString(
     try {
       dec = decodeUtf8(source, i, limit);
     } catch (ex) {
-      throw byteError((ex as Error).message, i);
+      const msg = ex instanceof Error ? ex.message : String(ex);
+      throw byteError(msg, i);
     }
     if (!dec) break;
     if (dec.cp === 0x2028 || dec.cp === 0x2029) {

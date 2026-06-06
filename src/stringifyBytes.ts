@@ -14,7 +14,7 @@
 
 import { ByteWriter, decodeUtf8 } from './bytes';
 import { controlEscape } from './escapes';
-import { QuoteContext, quoteString, serializeKey, chooseQuote } from './serializeShared';
+import { type QuoteContext, quoteString, serializeKey, chooseQuote } from './serializeShared';
 import { RawString, RawValue, QUOTE_DOUBLE, QUOTE_SINGLE } from './raw';
 
 export type SerializeConfig = {
@@ -124,7 +124,7 @@ export function serializeToBytes(value: any, config: SerializeConfig): Uint8Arra
 
     if (value instanceof RawValue) {
       if (value.preEscaped) {
-        spliceEscaped(value.bytes, value.quote as number);
+        spliceEscaped(value.bytes, value.quote);
       } else {
         escapeRaw(value.bytes);
       }
@@ -211,7 +211,8 @@ export function serializeToBytes(value: any, config: SerializeConfig): Uint8Arra
         try {
           dec = decodeUtf8(bytes, i);
         } catch (ex) {
-          throw new TypeError(`JSON11: RawValue.raw contains malformed UTF-8 (${(ex as Error).message})`);
+          const msg = ex instanceof Error ? ex.message : String(ex);
+          throw new TypeError(`JSON11: RawValue.raw contains malformed UTF-8 (${msg})`);
         }
         if (!dec) break;
         const escape = escapeTable.multiByte.get(dec.cp);
@@ -236,7 +237,7 @@ export function serializeToBytes(value: any, config: SerializeConfig): Uint8Arra
         continue;
       }
       if (b === 0x00) {
-        const next = bytes[i + 1];
+        const next = i + 1 < len ? bytes[i + 1] : -1;
         writer.pushBytes(next >= 0x30 && next <= 0x39 ? escapeTable.nulDigit : escapeTable.byByte[0]!);
         i++;
         continue;
