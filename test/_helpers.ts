@@ -30,7 +30,7 @@ export const pick = <T>(rng: () => number, arr: T[]): T => arr[randInt(rng, arr.
  * decoded JS string) so it can be deep-compared against the string parser. */
 export function materialize(value: any): any {
   if (value instanceof RawString) {
-    return value.toString();
+    return value.unsafeDecodeToString();
   }
   if (Array.isArray(value)) {
     return value.map(materialize);

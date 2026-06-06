@@ -167,7 +167,8 @@ one your change belongs in.
   `--expose-gc`). These corroborate the structural proof in
   `docs/byte-mode-heap-hygiene.md`; the doc is primary, the tests are the
   regression net. Includes an in-suite *positive control* (a value materialized
-  via the explicit `toString()` hatch that the sweep MUST find) — if the positive
+  via the explicit `unsafeDecodeToString()`/`unsafeEncodeAsJSON()` hatches that the
+  sweep MUST find) — if the positive
   control stops finding its needle, the whole sweep is meaningless and the suite
   must fail loudly rather than green-on-broken.
 - **Bench** (`byteMode.bench.ts`) — `vitest bench`. Not a gate; a regression
@@ -253,13 +254,20 @@ byte itself (`docs/byte-mode-heap-hygiene.md` "Side effects on the value path").
 A new error message that interpolates a value-derived byte/char into its string
 is a heap-hygiene regression even though it "only fires on malformed input".
 
-### 7. The `String` materialization hatch is explicit and singular
-`RawString.toString()` is the one and only sanctioned door from value bytes to a
-JS `String`, and it is documented "never call this for a secret". Do not add a
-second convenience that quietly stringifies a value (no `valueOf` that decodes to
-a string, no `JSON.stringify` hook that materializes, no implicit `+` coercion
-path you didn't intend). `RawString.span()`/`copy()`/`decode()` return bytes;
-keep it that way.
+### 7. `String` materialization is named, deliberate, and fail-closed
+`RawString.unsafeDecodeToString()` (one value) and the top-level
+`unsafeEncodeAsJSON(tree)` (a whole parsed tree) are the only sanctioned doors
+from value bytes to a JS `String`, and both are documented "never call this for a
+secret." Critically the hatch is **not** `toString`: `toString` is the method JS
+calls implicitly during every string coercion, so it must never decode the bytes.
+`RawString`/`RawValue` are therefore fail-closed — `toString()` returns a
+byte-free placeholder, and `Symbol.toPrimitive`/`valueOf`/`toJSON` throw, so
+`` `${rs}` ``/`String(rs)`/`'' + rs`/`JSON.stringify(tree)` fail loud instead of
+leaking — and the byte-bearing fields are non-enumerable. Do not add a second
+convenience that quietly stringifies a value (no `valueOf` that decodes, no
+`toJSON`/`util.inspect` hook that materializes, no implicit coercion path you
+didn't intend). `RawString.span()`/`copy()`/`decode()` return bytes; keep it that
+way.
 
 ### 8. API stays JSON-compatible and import-style agnostic
 `parse(text[, reviver[, options]])` and `stringify(value[, replacer[, space[,
@@ -353,13 +361,14 @@ from bytes:
 The single structural fact everything rests on: **bytes cannot become a `String`
 without `String.fromCharCode` / `String.fromCodePoint` / `TextDecoder.decode` /
 `Buffer.prototype.toString` (or `*Slice`) / `String(…)`.** Byte mode concentrates
-*all* of those into one class — `StringSink` (`src/raw.ts:57-69`) — and the secret
+*all* of those into one class — `StringSink` (`src/raw.ts:66-78`) — and the secret
 value path never instantiates it. `ByteSink` and `NULL_SINK` construct no
 `String`; `walkString`/`handleEscape`/`ByteWriter`/`decodeUtf8` are numeric-only.
-`StringSink` is built in exactly two places — `scanStringForParse(collect=true)`
-and `RawString.toString()` — and **neither is on the value path** (value tokens
-parse with `collect=false`, storing a `RawString`; keys/structure use the decoding
-path and are not secrets).
+`StringSink` is built only outside the value path — `scanStringForParse(collect=true)`
+(keys / `raw:'off'`) and the two deliberate hatches
+`RawString.unsafeDecodeToString()` and `unsafeEncodeAsJSON`'s `rawValueToString` —
+and **none is on the value path** (value tokens parse with `collect=false`, storing
+a `RawString`; keys/structure use the decoding path and are not secrets).
 
 Operational rules that keep X/Y/Z true:
 
@@ -372,7 +381,9 @@ Operational rules that keep X/Y/Z true:
   serializer's `RawString`/`RawValue` handling must be byte-only. If you need a
   string there, you've made a mistake.
 - **No value bytes in messages** (Convention #6).
-- **`toString()` is the only hatch** (Convention #7).
+- **`unsafeDecodeToString()`/`unsafeEncodeAsJSON()` are the only hatches, and the
+  surface fails closed** — `toString`/`Symbol.toPrimitive`/`valueOf`/`toJSON`
+  redact or throw (Convention #7).
 - **Caller owns buffer lifetime.** `span()` aliases the input; document and
   preserve that the caller must copy/`decode()` before zeroing the input, and that
   `ByteWriter.toUint8Array()` returns a right-sized *copy* so the internal

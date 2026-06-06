@@ -207,16 +207,35 @@ import { parse, RawString } from 'json11'
 const bytes = new TextEncoder().encode('{"subkey":"S3cr3t\\u0041","meta":"ok"}')
 const doc = parse(bytes, null, { raw: 'values' })
 
-doc.meta              // RawString
-doc.meta.toString()   // 'ok'  (safe: not a secret)
+doc.meta                       // RawString
+doc.meta.unsafeDecodeToString() // 'ok'  (safe: not a secret)
 
 const v = doc.subkey  // RawString — the secret never became a String
 v.span()              // Uint8Array view of the *escaped* inner bytes ("S3cr3t\u0041"),
                       //   aliasing the input buffer (zero-copy)
 v.copy()              // Uint8Array, a fresh copy of those escaped bytes
 v.decode()            // Uint8Array of the *decoded* value bytes ("S3cr3tA"), never a String
-// v.toString()       // ONLY for non-secrets: this materializes a JS String
+// v.unsafeDecodeToString()  // ONLY for non-secrets: this materializes a JS String
 ```
+
+A `RawString` fails closed against accidental leaks: `toString()` returns a
+byte-free placeholder (`[RawString length=…]`), implicit coercion
+(`` `${v}` ``, `String(v)`, `'' + v`, `[v].join()`) and `JSON.stringify(doc)`
+**throw** a `TypeError`, and the byte-bearing fields are non-enumerable. To
+materialize on purpose, call `unsafeDecodeToString()` for a single value, or — to
+JSON-serialize a whole parsed tree — `JSON11.unsafeEncodeAsJSON(doc)`:
+
+```js
+import JSON11 from 'json11'
+
+// Deliberate opt-in: turn a raw-parsed tree into a plain JSON-encodable value.
+// UNSAFE — materializes every borrowed value as a String; never for a secret.
+JSON.stringify(JSON11.unsafeEncodeAsJSON(doc))   // '{"subkey":"S3cr3tA","meta":"ok"}'
+```
+
+> Because a raw parse returns a `RawString` for **every** string value (secret or
+> not), `JSON.stringify(doc)` throws for any raw-parsed document. Use
+> `unsafeEncodeAsJSON(doc)` when you genuinely want JSON out.
 
 - `span()` returns a `subarray` view that aliases the input buffer. Do not mutate
   it, and copy it (or `decode()` it) before you zero the input buffer.
@@ -261,8 +280,14 @@ tree in byte mode; it is injected by its escaped span.
   malformed input throws a typed `SyntaxError`; misuse throws `TypeError`. No
   input causes an out-of-bounds read, hang, or partial/garbage value.
 - **No accidental `String` materialization.** Secrets stay as `Uint8Array`s
-  through parse → extract → re-serialize. A `String` is only ever produced if you
-  explicitly call `RawString.toString()`.
+  through parse → extract → re-serialize. A `String` of a value is only ever
+  produced through one of two deliberately-named doors:
+  `RawString.unsafeDecodeToString()` (a single value) or the top-level
+  `JSON11.unsafeEncodeAsJSON(tree)` (a whole parsed tree). Every implicit coercion
+  (`` `${v}` ``, `String(v)`, `'' + v`, `[v].join()`) and `JSON.stringify` throws
+  a `TypeError` instead, `toString()` returns a byte-free placeholder, and the
+  byte-bearing fields are non-enumerable so a property-walking serializer cannot
+  dump them.
 - **Escape consistency by construction.** Parser-side and serializer-side escape
   handling share one engine, so a span lifted from one JSON11 document and
   spliced into another round-trips byte-identically.

@@ -1,12 +1,13 @@
 import { parse } from './parse';
 import { stringify } from './stringify';
-import { RawString, RawValue } from './raw';
+import { RawString, RawValue, unsafeEncodeAsJSON } from './raw';
 
 export {
   parse,
   stringify,
   RawString,
   RawValue,
+  unsafeEncodeAsJSON,
 }
 
 // Also expose a default export so consumers can use any import style:
@@ -19,4 +20,5 @@ export default {
   stringify,
   RawString,
   RawValue,
+  unsafeEncodeAsJSON,
 };

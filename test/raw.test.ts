@@ -1,5 +1,5 @@
 import { expect, describe, it } from 'vitest';
-import { parse, stringify, RawString, RawValue } from '../src';
+import { parse, stringify, RawString, RawValue, unsafeEncodeAsJSON } from '../src';
 import { dec, enc, makeRng, randString } from './_helpers';
 
 describe('RawString', () => {
@@ -26,7 +26,7 @@ describe('RawString', () => {
     for (const [inner, expected] of cases) {
       const buf = enc(`"${inner}"`);
       const rs = new RawString(buf, 1, buf.length - 1, 0x22);
-      expect(rs.toString()).toBe(expected);
+      expect(rs.unsafeDecodeToString()).toBe(expected);
       expect(dec(rs.decode())).toBe(expected);
     }
   });
@@ -97,6 +97,72 @@ describe('Bar #4 — escape consistency, byte-identical span splice', () => {
     const out = stringify({ moved: RawValue.escaped(doc.subkey.span(), doc.subkey.quote) }, { raw: true })!;
     expect(out).toBeInstanceOf(Uint8Array);
     // The non-secret metadata may be decoded to a String safely.
-    expect(doc.meta.toString()).toBe('ok');
+    expect(doc.meta.unsafeDecodeToString()).toBe('ok');
+  });
+});
+
+describe('no-String surface — implicit coercion and JSON fail closed', () => {
+  it('secret-bearing fields are non-enumerable (no property-walk leak)', () => {
+    const rs = new RawString(enc('"S3cr3t-VALUE"'), 1, 13, 0x22);
+    expect(Object.keys(rs)).toEqual([]);
+    expect(Object.keys(rs)).not.toContain('source');
+    // still publicly readable
+    expect(rs.source).toBeInstanceOf(Uint8Array);
+    expect(rs.start).toBe(1);
+    expect(rs.end).toBe(13);
+    expect(rs.quote).toBe(0x22);
+  });
+
+  it('toString() returns a byte-free placeholder built from the length only', () => {
+    const rs = new RawString(enc('"S3cr3t-VALUE"'), 1, 13, 0x22);
+    expect(rs.toString()).toBe('[RawString length=12]');
+    expect(rs.toString()).not.toContain('S3cr3t');
+  });
+
+  it('implicit coercion throws instead of materializing the value', () => {
+    const rs = new RawString(enc('"S3cr3t-VALUE"'), 1, 13, 0x22);
+    expect(() => `${rs}`).toThrow(TypeError);
+    expect(() => String(rs)).toThrow(TypeError);
+    expect(() => '' + (rs as any)).toThrow(TypeError);
+    expect(() => [rs].join(',')).toThrow(TypeError);
+    expect(() => (rs as any).valueOf()).toThrow(TypeError);
+  });
+
+  it('JSON.stringify throws for any raw-parsed tree (secret or not)', () => {
+    const doc: any = parse(enc('{"subkey":"secret","meta":"ok"}'), null, { raw: 'values' });
+    expect(() => JSON.stringify(doc)).toThrow(TypeError);
+    expect(() => JSON.stringify(doc.subkey)).toThrow(TypeError);
+  });
+
+  it('unsafeDecodeToString() is the explicit single-value hatch', () => {
+    const doc: any = parse(enc('{"k":"S3cr3t\\u0041"}'), null, { raw: 'values' });
+    expect(doc.k.unsafeDecodeToString()).toBe('S3cr3tA');
+  });
+});
+
+describe('unsafeEncodeAsJSON — the deliberate whole-tree JSON opt-in', () => {
+  it('materializes RawStrings and round-trips through JSON.stringify', () => {
+    const doc: any = parse(enc('{"a":"x\\u0041","b":["y",1,true,null],"n":2}'), null, { raw: 'values' });
+    const plain = unsafeEncodeAsJSON(doc);
+    expect(plain).toEqual({ a: 'xA', b: ['y', 1, true, null], n: 2 });
+    expect(JSON.stringify(plain)).toBe('{"a":"xA","b":["y",1,true,null],"n":2}');
+  });
+
+  it('does not mutate the source tree (RawStrings stay byte-only)', () => {
+    const doc: any = parse(enc('{"a":"x"}'), null, { raw: 'values' });
+    unsafeEncodeAsJSON(doc);
+    expect(doc.a).toBeInstanceOf(RawString);
+  });
+
+  it('rebuilds objects prototype-safely', () => {
+    const doc: any = parse(enc('{"__proto__":"polluted","ok":"v"}'), null, { raw: 'values' });
+    const plain: any = unsafeEncodeAsJSON(doc);
+    expect(Object.getPrototypeOf(plain)).toBe(Object.prototype);
+    expect(Object.prototype.hasOwnProperty.call(plain, '__proto__')).toBe(true);
+  });
+
+  it('decodes a RawValue defensively via the StringSink path', () => {
+    const plain = unsafeEncodeAsJSON({ v: RawValue.escaped(enc('a\\nb'), 0x22) }) as any;
+    expect(plain.v).toBe('a\nb');
   });
 });

@@ -22,9 +22,17 @@ bytes (`{"subkey":"<secret>", …}`):
 **Scope.** Only string **values** are protected. Object **keys** are always
 decoded to JS strings (JS objects require string keys), so a secret must be a
 *value*, not a key. This matches the motivating consumer (`{"subkey":"secret"}`).
-Numbers/bigints/booleans/null are not secrets. The escape hatch
-`RawString.toString()` deliberately produces a `String`; it must never be called
-on a secret (it is the one and only door to X being violated, and it is explicit).
+Numbers/bigints/booleans/null are not secrets. Two deliberately-named hatches
+produce a `String` on purpose and must never be called on a secret:
+`RawString.unsafeDecodeToString()` (one value) and the top-level
+`unsafeEncodeAsJSON(tree)` (a whole parsed tree). These are the only doors to X
+being violated. Critically they are **not** `toString`: `toString()` returns a
+byte-free placeholder, and `Symbol.toPrimitive`/`valueOf`/`toJSON` throw, so every
+*implicit* coercion (`${x}`, `String(x)`, `'' + x`, `[x].join()`) and
+`JSON.stringify(tree)` fails loud instead of silently materializing the bytes.
+The secret-bearing fields (`source`/`start`/`end`/`quote`, and
+`RawValue.bytes`/`preEscaped`/`quote`) are non-enumerable, so a property-walking
+serializer cannot dump them either.
 
 ## The one structural invariant everything rests on
 
@@ -41,22 +49,27 @@ instantiates it.
 
 `src/raw.ts` has two sinks fed by the shared `walkString` engine:
 
-- `StringSink` (`src/raw.ts:57-69`) — the **only** place value-shaped bytes can
-  become a `String`: `textDecoder.decode(...)` on literal runs (`:61`) and
-  `String.fromCodePoint(cp)` on escapes (`:64`).
-- `ByteSink` (`src/raw.ts:71-106`) — byte writes only (`writer.pushBytes`,
+- `StringSink` (`src/raw.ts:66-78`) — the **only** place value-shaped bytes can
+  become a `String`: `textDecoder.decode(...)` on literal runs (`:70`) and
+  `String.fromCodePoint(cp)` on escapes (`:73`).
+- `ByteSink` (`src/raw.ts:80-115`) — byte writes only (`writer.pushBytes`,
   `writer.pushCodePoint`); constructs no `String`.
-- `NULL_SINK` (`src/raw.ts:52-55`) — no-ops (validate only).
+- `NULL_SINK` (`src/raw.ts:61-64`) — no-ops (validate only).
 
-`walkString` (`src/raw.ts:206-260`) and `handleEscape` (`src/raw.ts:136-194`) are
+`walkString` (`src/raw.ts:215-269`) and `handleEscape` (`src/raw.ts:145-203`) are
 **sink-agnostic and contain zero `String` construction** — they only call
 `decodeUtf8` (returns the numeric `{cp,size}`) and `readHex` (returns numbers),
 and delegate output to the sink. `ByteWriter`/`decodeUtf8` in `src/bytes.ts` are
 numeric byte operations only (`src/bytes.ts:12-157`).
 
-`StringSink` is instantiated in exactly two places:
-`scanStringForParse(collect=true)` (`src/raw.ts:274`) and `RawString.toString()`
-(`src/raw.ts:321`). **Neither is on the secret value path.**
+`StringSink` is instantiated in exactly three places, **none on the secret value
+path**: `scanStringForParse(collect=true)` (`src/raw.ts:283`, used for keys /
+`raw:'off'`, never a value token); `RawString.unsafeDecodeToString()`
+(`src/raw.ts:339`, the deliberate single-value hatch); and `rawValueToString`
+(`src/raw.ts:467`), reached only from the deliberate whole-tree hatch
+`unsafeEncodeAsJSON` (`src/raw.ts:481`). The value-token parse path stores a
+`RawString` (`collect=false`) and never decodes it unless the caller explicitly
+invokes one of those two hatches.
 
 ## Side effects on the value path
 
@@ -102,12 +115,12 @@ structural characters (`{ } [ ] : , "` whitespace, number/literal chars) and for
 
 ### Accessors
 
-- `RawString.span()` (`src/raw.ts:303-305`): `this.source.subarray(start, end)` —
+- `RawString.span()` (`src/raw.ts:319-321`): `this.source.subarray(start, end)` —
   a zero-copy view aliasing the caller's input. **(Z, span path.)**
-- `RawString.copy()` (`src/raw.ts:308-310`): `this.source.slice(start, end)` — a
+- `RawString.copy()` (`src/raw.ts:324-326`): `this.source.slice(start, end)` — a
   fresh byte copy.
-- `RawString.decode()` (`src/raw.ts:314-316`) → `RawString.decodeBytes`
-  (`src/raw.ts:329-333`): `new ByteSink(buf)` + `walkString(…, sink, …, false)` +
+- `RawString.decode()` (`src/raw.ts:330-332`) → `RawString.decodeBytes`
+  (`src/raw.ts:379-383`): `new ByteSink(buf)` + `walkString(…, sink, …, false)` +
   `sink.result()` (`ByteWriter.toUint8Array`). Byte writes only. **(Z, decode
   path.)** The whole decoded-bytes accessor is 4 lines plus the sink-agnostic
   engine; small enough to review conclusively, so no refactor was needed.
@@ -142,10 +155,11 @@ The proposed sketches were adapted and strengthened (see test comments):
    The substring spy can't catch a `String.fromCharCode(b)`-per-byte build (each
    call sees one char) and `+=` isn't patchable. Instead, Test B runs the
    `span()`/`decode()` accessors *in isolation* (parse done beforehand) under
-   spies on **every** byte→string entry point (`fromCharCode`, `fromCodePoint`,
-   `TextDecoder.decode`, `Buffer.prototype.toString`/`*Slice`) and asserts the
-   call count is **zero**. Since bytes cannot become a string without one of
-   those, this catches char-by-char, rope/`ConsString`, and `TextDecoder` alike.
+   spies on **every** byte→string entry point named by the invariant
+   (`fromCharCode`, `fromCodePoint`, the global `String`, `TextDecoder.decode`,
+   `Buffer.prototype.toString`/`*Slice`) and asserts the call count is **zero**.
+   Since bytes cannot become a string without one of those, this catches
+   char-by-char, rope/`ConsString`, and `TextDecoder` alike.
 2. **Distinctive-code-point probe for the parse phase.** Parsing legitimately
    stringifies structure/keys, so a zero-call assertion can't apply there.
    Instead the secret value carries distinctive code points (U+E007 BMP and
@@ -156,9 +170,10 @@ The proposed sketches were adapted and strengthened (see test comments):
    string would itself be found by the sweep (false positive). The secret is
    generated and carried as **bytes only**; the search needle is materialized
    from those bytes *after* the snapshot is captured, so it cannot pollute it.
-4. **In-suite positive control.** A companion case materializes a *different*
-   secret via the explicit `toString()` hatch and asserts the sweep **finds** it,
-   proving a green "not found" is meaningful in this V8 build.
+4. **In-suite positive control.** Companion cases materialize a *different*
+   secret via each explicit hatch — `RawString.unsafeDecodeToString()` and
+   `unsafeEncodeAsJSON(tree)` — and assert the sweep **finds** it, proving a green
+   "not found" is meaningful in this V8 build.
 5. **Documented snapshot caveats.** `getHeapSnapshot()` GCs before capture (so a
    transient is collected → the sweep is a strong Y check and only a weak X
    check); `concatenated string`/`sliced string` node *names* may not carry full

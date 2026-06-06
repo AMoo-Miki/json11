@@ -6,13 +6,15 @@
  *
  * The motivating value path is: parse(bytes, …, { raw:'values' }) -> RawString,
  * then `.span()` (zero-copy view) / `.decode()` (fresh bytes), then re-inject via
- * RawValue into stringify(…, { raw:true }). `.toString()` is the explicit, opt-in
- * escape hatch that DOES create a String and must never touch a secret.
+ * RawValue into stringify(…, { raw:true }). `.unsafeDecodeToString()` (one value)
+ * and `unsafeEncodeAsJSON(tree)` (a whole parsed tree) are the deliberately-named
+ * opt-in hatches that DO create a String and must never touch a secret; every
+ * implicit coercion and `JSON.stringify` now throws instead of materializing.
  */
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 import crypto from 'node:crypto';
 import v8 from 'node:v8';
-import { parse, stringify, RawValue } from '../src';
+import { parse, stringify, RawValue, unsafeEncodeAsJSON } from '../src';
 import { enc, makeRng, randString } from './_helpers';
 
 // ---------- byte construction helpers (never build a String of a secret) ----------
@@ -93,6 +95,11 @@ function installCountingSpies() {
   };
   wrap(String, 'fromCharCode');
   wrap(String, 'fromCodePoint');
+  // The invariant (docs/byte-mode-heap-hygiene.md) names the global String(…) as
+  // a byte→String entry point, so spy it too. The value accessors are numeric-only
+  // and never call it; if a future regression routes value bytes through String(…)
+  // this catches it. The wrapper itself calls only push/apply, so it can't recurse.
+  wrap(globalThis as any, 'String');
   wrap((globalThis as any).TextDecoder.prototype, 'decode');
   for (const m of ['toString', 'utf8Slice', 'latin1Slice', 'asciiSlice', 'ucs2Slice', 'hexSlice']) {
     wrap(Buffer.prototype as any, m);
@@ -275,13 +282,56 @@ describe('C — no lingering String of the secret on the heap', () => {
     expect(await reachableSecretString(secret)).toBe(false);
   });
 
-  it('positive control: the sweep DOES find a secret materialized via toString() [methodology check]', async () => {
+  it('positive control: the sweep DOES find a secret materialized via unsafeDecodeToString() [methodology check]', async () => {
     const secret = makeSecretBytes();
     const doc: any = parse(docWith(secret), null, { raw: 'values' });
-    const leaked = doc.k.toString(); // the explicit escape hatch -> a real String of the secret
+    const leaked = doc.k.unsafeDecodeToString(); // the explicit hatch -> a real String of the secret
     global.gc?.();
     expect(await reachableSecretString(secret)).toBe(true);
     expect(leaked.length).toBe(32); // keep `leaked` reachable through the assertion
+  });
+
+  it('positive control: the sweep DOES find a secret materialized via unsafeEncodeAsJSON() [methodology check]', async () => {
+    const secret = makeSecretBytes();
+    const doc: any = parse(docWith(secret), null, { raw: 'values' });
+    const leaked: any = unsafeEncodeAsJSON(doc); // the deliberate whole-tree JSON opt-in
+    global.gc?.();
+    expect(await reachableSecretString(secret)).toBe(true);
+    expect(leaked.k.length).toBe(32); // keep the materialized tree reachable through the assertion
+  });
+});
+
+// ---------- Test E: fail-closed surface — coercion / JSON throw, hatches trip the spy ----------
+
+describe('E — the no-String surface fails closed and the hatches are the only doors', () => {
+  it('JSON.stringify / implicit coercion throw for a raw-parsed value (never leak) [X]', () => {
+    const doc: any = parse(docWith(makeSecretBytes()), null, { raw: 'values' });
+    expect(Object.keys(doc.k)).not.toContain('source');
+    expect(() => JSON.stringify(doc)).toThrow(TypeError);
+    expect(() => `${doc.k}`).toThrow(TypeError);
+    expect(() => String(doc.k)).toThrow(TypeError);
+    // The byte-free placeholder reveals no value bytes.
+    expect(doc.k.toString()).toMatch(/^\[RawString length=\d+\]$/);
+  });
+
+  it('unsafeDecodeToString() and unsafeEncodeAsJSON() route through a byte→String primitive [X-hatch]', () => {
+    const doc: any = parse(docWith(makeSecretBytes()), null, { raw: 'values' });
+
+    let spy = installCountingSpies();
+    try {
+      doc.k.unsafeDecodeToString();
+    } finally {
+      spy.restore();
+    }
+    expect(spy.calls.length).toBeGreaterThan(0);
+
+    spy = installCountingSpies();
+    try {
+      unsafeEncodeAsJSON(doc);
+    } finally {
+      spy.restore();
+    }
+    expect(spy.calls.length).toBeGreaterThan(0);
   });
 });
 

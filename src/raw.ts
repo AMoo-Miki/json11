@@ -3,7 +3,10 @@
  * `RawString` is the borrowed-span node returned by `parse(bytes, …, { raw })`:
  * it aliases the input buffer and exposes a chosen string value's bytes without
  * ever constructing a GC-managed JS String (`span`/`copy`/`decode`). It only
- * materializes a String if the caller explicitly asks via `toString`.
+ * materializes a String if the caller deliberately opts in via
+ * `unsafeDecodeToString` (single value) or the top-level `unsafeEncodeAsJSON`
+ * helper (a whole parsed tree). Every implicit coercion (`${x}`, `String(x)`,
+ * `'' + x`) and `JSON.stringify` is wired to throw instead of leaking the bytes.
  *
  * `RawValue` is the tagged wrapper the byte serializer injects verbatim
  * (pre-escaped) or escapes itself (raw bytes), so a secret can reach the output
@@ -20,6 +23,12 @@ export const QUOTE_SINGLE = 0x27;
 const BACKSLASH = 0x5c;
 const LF = 0x0a;
 const CR = 0x0d;
+
+/* Node renders objects through this hook; defining it lets `console.log`/
+ * `util.inspect` show a byte-free placeholder instead of dumping the borrowed
+ * bytes. Not a literal/unique-symbol type, so it is installed on the prototype
+ * after each class body rather than as an in-class computed member. */
+const NODE_INSPECT = Symbol.for('nodejs.util.inspect.custom');
 
 // ignoreBOM: true is essential — without it TextDecoder strips a leading U+FEFF
 // from every decoded run, dropping BOMs that the string parser preserves.
@@ -282,20 +291,27 @@ export function scanStringForParse(
 /* A borrowed view over one JSON string value's escaped inner bytes. Aliases the
  * input buffer; the caller owns that buffer's lifetime and zeroing. */
 export class RawString {
-  /* The input buffer this value is borrowed from (aliased, not copied). */
-  readonly source: Uint8Array;
+  /* The input buffer this value is borrowed from (aliased, not copied).
+   * `declare` keeps the public type surface without emitting a class-field
+   * initializer; the constructor defines it non-enumerable instead. */
+  declare readonly source: Uint8Array;
   /* Inner byte offset just past the opening quote. */
-  readonly start: number;
+  declare readonly start: number;
   /* Inner byte offset of the closing quote (exclusive end of the value). */
-  readonly end: number;
+  declare readonly end: number;
   /* The quote byte the value was written with (0x22 `"` or 0x27 `'`). */
-  readonly quote: QuoteByte;
+  declare readonly quote: QuoteByte;
 
   constructor(source: Uint8Array, start: number, end: number, quote: QuoteByte) {
-    this.source = source;
-    this.start = start;
-    this.end = end;
-    this.quote = quote;
+    /* Secret-bearing state is defined non-enumerable so a property-walking
+     * serializer (JSON.stringify, util.inspect's default render, a structured
+     * clone, a logging framework) cannot dump the borrowed bytes. The fields
+     * stay publicly readable (documented accessors; quote is read by the byte
+     * serializer cross-module) — only their enumerability changes. */
+    Object.defineProperty(this, 'source', { value: source, enumerable: false, writable: false });
+    Object.defineProperty(this, 'start', { value: start, enumerable: false, writable: false });
+    Object.defineProperty(this, 'end', { value: end, enumerable: false, writable: false });
+    Object.defineProperty(this, 'quote', { value: quote, enumerable: false, writable: false });
   }
 
   /* (2a) Zero-copy view of the escaped inner bytes between the quotes. Aliases
@@ -315,12 +331,46 @@ export class RawString {
     return RawString.decodeBytes(this.source, this.start, this.end, this.quote);
   }
 
-  /* Lazily decode to a JS String. SECURITY: never call this for a secret value —
-   * it materializes the value on the V8 heap where it cannot be zeroed. */
-  toString(): string {
+  /* Materializes the value as a JS String. Never call this for a secret — the
+   * resulting String is immutable, unzeroable, and lingers on the heap. This is
+   * the single sanctioned byte→String door for one value; lone surrogate escapes
+   * are preserved exactly as `parse(string)` produces them. */
+  unsafeDecodeToString(): string {
     const sink = new StringSink(this.source);
     walkString(this.source, this.start, this.quote, sink, this.end, false);
     return sink.result();
+  }
+
+  /* Redacted, byte-free placeholder so an accidental `console.log(rs)` or an
+   * explicit `rs.toString()` reveals nothing. Built from the inner byte length
+   * only — never decodes the bytes. To materialize the value, call
+   * `unsafeDecodeToString()` deliberately. */
+  toString(): string {
+    return `[RawString length=${this.end - this.start}]`;
+  }
+
+  /* Every implicit coercion funnels through ToPrimitive; throwing here makes
+   * `${rs}`, `String(rs)`, `'' + rs`, `[rs].join()`, and `rs.toLocaleString()`
+   * fail loud instead of silently decoding the secret. */
+  [Symbol.toPrimitive](): never {
+    throw new TypeError(
+      'JSON11: refusing to coerce a RawString to a primitive; use .decode() for bytes or .unsafeDecodeToString() to opt in',
+    );
+  }
+
+  valueOf(): never {
+    throw new TypeError(
+      'JSON11: refusing to coerce a RawString to a primitive; use .decode() for bytes or .unsafeDecodeToString() to opt in',
+    );
+  }
+
+  /* Makes `JSON.stringify(rawTree)` fail loud rather than enumerate the bytes.
+   * A raw parse returns a RawString for every string value, so this throws for
+   * any raw-parsed document, secret-bearing or not. */
+  toJSON(): never {
+    throw new TypeError(
+      'JSON11: refusing to JSON-serialize a RawString; call .decode()/.copy() for bytes, .unsafeDecodeToString() for a String, or JSON11.unsafeEncodeAsJSON(tree) to opt into JSON materialization of a whole parsed tree',
+    );
   }
 
   /* Low-level byte-level JSON11 string unescape over an explicit inner range,
@@ -333,18 +383,30 @@ export class RawString {
   }
 }
 
+Object.defineProperty(RawString.prototype, NODE_INSPECT, {
+  value(this: RawString): string {
+    return this.toString();
+  },
+  enumerable: false,
+  writable: true,
+  configurable: true,
+});
+
 /* A tagged value the byte serializer injects without it ever becoming a String:
  * either pre-escaped inner bytes spliced verbatim between quotes, or raw
  * (unescaped) bytes that JSON11 escapes into the output using its own escaper. */
 export class RawValue {
-  /* @internal */ readonly bytes: Uint8Array;
-  /* @internal */ readonly preEscaped: boolean;
-  /* @internal */ readonly quote: QuoteByte | 0;
+  /* @internal Read cross-module by the byte serializer; `declare` keeps the type
+   * while the constructor defines it non-enumerable (so a property-walk cannot
+   * dump the bytes). */
+  declare readonly bytes: Uint8Array;
+  /* @internal */ declare readonly preEscaped: boolean;
+  /* @internal */ declare readonly quote: QuoteByte | 0;
 
   private constructor(bytes: Uint8Array, preEscaped: boolean, quote: QuoteByte | 0) {
-    this.bytes = bytes;
-    this.preEscaped = preEscaped;
-    this.quote = quote;
+    Object.defineProperty(this, 'bytes', { value: bytes, enumerable: false, writable: false });
+    Object.defineProperty(this, 'preEscaped', { value: preEscaped, enumerable: false, writable: false });
+    Object.defineProperty(this, 'quote', { value: quote, enumerable: false, writable: false });
   }
 
   /* Splice already-escaped inner bytes verbatim, wrapped in `quote`. Use this to
@@ -361,4 +423,85 @@ export class RawValue {
   static raw(bytes: Uint8Array): RawValue {
     return new RawValue(bytes, false, 0);
   }
+
+  /* Byte-free placeholder; never decodes the bytes. */
+  toString(): string {
+    return `[RawValue length=${this.bytes.length}]`;
+  }
+
+  [Symbol.toPrimitive](): never {
+    throw new TypeError(
+      'JSON11: refusing to coerce a RawValue to a primitive; pass it to stringify(value, { raw: true }) to emit its bytes',
+    );
+  }
+
+  valueOf(): never {
+    throw new TypeError(
+      'JSON11: refusing to coerce a RawValue to a primitive; pass it to stringify(value, { raw: true }) to emit its bytes',
+    );
+  }
+
+  toJSON(): never {
+    throw new TypeError(
+      'JSON11: refusing to JSON-serialize a RawValue; pass it to stringify(value, { raw: true }), or JSON11.unsafeEncodeAsJSON(tree) to opt into JSON materialization',
+    );
+  }
+}
+
+Object.defineProperty(RawValue.prototype, NODE_INSPECT, {
+  value(this: RawValue): string {
+    return this.toString();
+  },
+  enumerable: false,
+  writable: true,
+  configurable: true,
+});
+
+/* Decode a RawValue's bytes to a JS String through the single `StringSink`
+ * door. Defensive: a parse never yields a RawValue (it yields RawString), so
+ * this only fires when a caller has placed a RawValue into a tree they then ask
+ * `unsafeEncodeAsJSON` to materialize. Raw (unescaped) bytes are walked with the
+ * same escaper for consistency. */
+function rawValueToString(value: RawValue): string {
+  const quote = value.quote === 0 ? QUOTE_DOUBLE : value.quote;
+  const sink = new StringSink(value.bytes);
+  walkString(value.bytes, 0, quote, sink, value.bytes.length, false);
+  return sink.result();
+}
+
+/* UNSAFE: materializes every borrowed value in the tree as a JS String. Only
+ * call when you deliberately intend to JSON-serialize raw-parsed data; never for
+ * a tree that still holds a secret you mean to keep out of the heap.
+ *
+ * Returns a fresh, plain JSON-encodable structure — the input tree is never
+ * mutated, so its RawStrings stay byte-only. Each RawString becomes its
+ * `unsafeDecodeToString()` value; every other value (number/bigint/boolean/null)
+ * passes through unchanged (BigInt remains the caller's/JSON.stringify's
+ * concern). */
+export function unsafeEncodeAsJSON(value: unknown): unknown {
+  if (value instanceof RawString) {
+    return value.unsafeDecodeToString();
+  }
+  if (value instanceof RawValue) {
+    return rawValueToString(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map((element) => unsafeEncodeAsJSON(element));
+  }
+  if (value !== null && typeof value === 'object') {
+    const source = value as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    /* Prototype-safe rebuild: a `__proto__`/accessor key in the source becomes a
+     * plain own data property on the copy instead of polluting the prototype. */
+    for (const key of Object.keys(source)) {
+      Object.defineProperty(out, key, {
+        value: unsafeEncodeAsJSON(source[key]),
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+    }
+    return out;
+  }
+  return value;
 }

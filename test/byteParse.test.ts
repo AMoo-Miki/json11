@@ -123,7 +123,7 @@ describe('parse(Uint8Array, …, { raw }) — borrowed spans', () => {
       const s = randString(rng, 30);
       const text = `{"v":${JSON.stringify(s)}}`;
       const doc: any = parse(enc(text), null, { raw: 'values' });
-      expect(doc.v.toString()).toBe(s);
+      expect(doc.v.unsafeDecodeToString()).toBe(s);
     }
   });
 

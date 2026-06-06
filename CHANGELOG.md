@@ -29,8 +29,14 @@ The first independent JSON11 release (forked from JSON5 v2.2.3).
     fuzz-tested against the string parser.
   - `parse(bytes, …, { raw: 'values' })` returns string values as borrowed
     `RawString` spans — escaped `span()`/`copy()` and decoded `decode()` bytes —
-    without ever materializing a `String` (`toString()` stays opt-in). Keys remain
-    JS strings, so `raw: 'all'` currently aliases `'values'`.
+    without ever materializing a `String`. Materializing is a deliberate, named
+    opt-in: `RawString.unsafeDecodeToString()` (one value) or the top-level
+    `unsafeEncodeAsJSON(tree)` (a whole parsed tree). Keys remain JS strings, so
+    `raw: 'all'` currently aliases `'values'`.
+  - New top-level `unsafeEncodeAsJSON(tree)` export: deep-copies a raw-parsed tree
+    into a fresh, plain JSON-encodable structure (each `RawString` →
+    `unsafeDecodeToString()`), so `JSON.stringify(JSON11.unsafeEncodeAsJSON(doc))`
+    is the explicit "I want JSON out" path.
   - `stringify(value, { raw: true })` returns a `Uint8Array` and injects
     `RawValue.escaped(span, quote)` (verbatim, byte-identical) or
     `RawValue.raw(bytes)` (escaped by JSON11) so values can reach the output
@@ -42,6 +48,21 @@ The first independent JSON11 release (forked from JSON5 v2.2.3).
 
 ### Changed
 
+- **Byte mode no-`String` surface is now fail-closed (breaking).** The byte→`String`
+  hatch was renamed from `RawString.toString()` to `RawString.unsafeDecodeToString()`,
+  because `toString` is exactly the method JavaScript calls implicitly during string
+  coercion — so the "explicit hatch" leaked on `` `${rs}` ``, `String(rs)`, `'' + rs`,
+  etc. Now:
+  - `RawString.toString()` returns a byte-free placeholder (`[RawString length=…]`);
+    `RawValue.toString()` likewise.
+  - `Symbol.toPrimitive`, `valueOf`, and `toJSON` on `RawString`/`RawValue` **throw a
+    `TypeError`**, so every implicit coercion and `JSON.stringify(tree)` fails loud
+    instead of materializing the bytes. A raw parse returns a `RawString` for every
+    string value, so `JSON.stringify` throws for **any** raw-parsed document (secret
+    or not) — use `unsafeEncodeAsJSON(tree)` to opt in.
+  - `RawString.source`/`start`/`end`/`quote` and `RawValue.bytes`/`preEscaped`/`quote`
+    are now non-enumerable (still publicly readable), so `Object.keys`,
+    `JSON.stringify`, and default `util.inspect` no longer dump the borrowed bytes.
 - The UMD/browser global is `JSON11` (JSON5 exposed `JSON5`). The package is
   published as `json11`. Named exports (`parse`, `stringify`) are unchanged, so
   `import { parse } from 'json11'` works as before, and a default export is now

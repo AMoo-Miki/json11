@@ -61,6 +61,7 @@ verdict".
 - [0003 — Borrowed value spans: `RawString`/`RawValue`, `raw` folded into parse/stringify](./0003-borrowed-spans-raw-option.md)
 - [0004 — One shared escape engine; lifted spans round-trip byte-identically](./0004-one-shared-escape-engine.md)
 - [0005 — The no-`String` guarantee: `StringSink` confinement + structural proof](./0005-no-string-guarantee.md)
+- [0013 — Fail-safe coercion: named `unsafe*` hatches replace `toString()`](./0013-fail-safe-coercion-no-string-surface.md)
 
 ### Grammar, numbers, and correctness posture
 

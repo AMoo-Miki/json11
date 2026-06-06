@@ -63,13 +63,13 @@ describe('adversarial: UTF-8 boundary forms (decodeUtf8 accept/reject)', () => {
     const max = [0xf4, 0x8f, 0xbf, 0xbf];
     const doc: any = parse(buf('{"k":"', max, '"}'), null, { raw: 'values' });
     expect(Array.from(doc.k.decode())).toEqual(max);
-    expect(doc.k.toString()).toBe('\u{10FFFF}');
+    expect(doc.k.unsafeDecodeToString()).toBe('\u{10FFFF}');
   });
 
   it('accepts U+0080, U+07FF, U+0800, U+FFFF boundary scalars', () => {
     const text = '"\u0080\u07ff\u0800\uffff"';
     const doc: any = parse(buf('{"k":', enc(text), '}'), null, { raw: 'values' });
-    expect(doc.k.toString()).toBe('\u0080\u07ff\u0800\uffff');
+    expect(doc.k.unsafeDecodeToString()).toBe('\u0080\u07ff\u0800\uffff');
     expect(Array.from(doc.k.decode())).toEqual(Array.from(enc('\u0080\u07ff\u0800\uffff')));
   });
 });
@@ -92,7 +92,7 @@ describe('adversarial: malformed surrogate escapes decode with U+FFFD parity', (
       const text = `{"k":"${inner}"}`;
       const expected = (parse(text) as any).k as string;
       const doc: any = parse(enc(text), null, { raw: 'values' });
-      expect(doc.k.toString()).toBe(expected);
+      expect(doc.k.unsafeDecodeToString()).toBe(expected);
       expect(Array.from(doc.k.decode())).toEqual(Array.from(enc(expected)));
     });
   }
@@ -178,7 +178,7 @@ describe('adversarial: escaped line continuations decode like the string path', 
       const text = `{"k":${inner}}`;
       const expected = (parse(text) as any).k as string;
       const doc: any = parse(enc(text), null, { raw: 'values' });
-      expect(doc.k.toString()).toBe(expected);
+      expect(doc.k.unsafeDecodeToString()).toBe(expected);
       expect(Array.from(doc.k.decode())).toEqual(Array.from(enc(expected)));
     });
   }

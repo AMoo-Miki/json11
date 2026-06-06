@@ -4,6 +4,9 @@
 **Implementation:** Implemented (`src/raw.ts`, `src/bytes.ts`); proof in `docs/byte-mode-heap-hygiene.md`
 
 - Refines: [0003 — Borrowed spans](./0003-borrowed-spans-raw-option.md)
+- Amended by: [0013 — Fail-safe coercion](./0013-fail-safe-coercion-no-string-surface.md) — the
+  "`toString()` is the single explicit hatch" provision is superseded; the
+  `StringSink`-confinement core below still holds.
 - Related: [0011 — Lone-surrogate / separator policy](./0011-lone-surrogate-and-separator-policy.md)
 
 ## Context
