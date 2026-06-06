@@ -410,6 +410,58 @@ describe('stringify(value, options)', () => {
     });
   });
 
+  describe.concurrent('nonFinite', () => {
+    const doc = { a: Infinity, b: -Infinity, c: NaN, d: 1.5 };
+
+    it('emits non-finite numbers literally by default', () => {
+      expect(stringify(doc)).toBe('{a:Infinity,b:-Infinity,c:NaN,d:1.5}');
+      expect(stringify(doc, { nonFinite: 'literal' })).toBe('{a:Infinity,b:-Infinity,c:NaN,d:1.5}');
+    });
+
+    it("coerces non-finite numbers to null with nonFinite: 'null'", () => {
+      expect(stringify(doc, { nonFinite: 'null' })).toBe('{a:null,b:null,c:null,d:1.5}');
+      expect(stringify([Infinity, -Infinity, NaN], { nonFinite: 'null' })).toBe('[null,null,null]');
+    });
+
+    it("throws on a non-finite number with nonFinite: 'throw'", () => {
+      expect(() => stringify(doc, { nonFinite: 'throw' })).toThrow(TypeError);
+      expect(() => stringify(NaN, { nonFinite: 'throw' })).toThrow(/non-finite/);
+      expect(stringify(1.5, { nonFinite: 'throw' })).toBe('1.5');
+    });
+  });
+
+  describe.concurrent('pureJson', () => {
+    it('emits strict, valid JSON and round-trips through global JSON.parse', () => {
+      const doc = { 'a-b': "he'llo", n: Infinity, m: NaN, big: 10n };
+      const out = stringify(doc, { pureJson: true });
+      expect(out).toBe('{"a-b":"he\'llo","n":null,"m":null,"big":10}');
+      expect(() => JSON.parse(out!)).not.toThrow();
+    });
+
+    it('overrides the granular output-shaping options regardless of how they were set', () => {
+      const doc = { a: 5n, b: Infinity };
+      /* The public type makes pureJson mutually exclusive with these flags, so
+       * this combination is cast through `any`: the runtime override is
+       * defense-in-depth for JS callers (or casts) that bypass the type. */
+      const out = stringify(doc, {
+        pureJson: true,
+        quote: "'",
+        quoteNames: false,
+        withBigInt: true,
+        withLegacyEscapes: true,
+        nonFinite: 'literal',
+        trailingComma: true,
+        space: 2,
+      } as any);
+      expect(out).toBe('{\n  "a": 5,\n  "b": null\n}');
+      expect(() => JSON.parse(out!)).not.toThrow();
+    });
+
+    it('leaves space (indentation) untouched', () => {
+      expect(stringify({ a: 1 }, { pureJson: true, space: 2 })).toBe('{\n  "a": 1\n}');
+    });
+  });
+
   describe.concurrent(`quote: '"'`, () => {
     describe.concurrent('Objects', () => {
       it('stringifies unquoted property names', () => {

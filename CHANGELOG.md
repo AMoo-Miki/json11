@@ -18,8 +18,39 @@ This project follows [Semantic Versioning]; the format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **`pureJson` stringify option.** `stringify(value, { pureJson: true })` emits
+  strict, valid JSON. It is evaluated last and overrides the other output-shaping
+  options regardless of how they were set: double quotes, quoted property names,
+  BigInt as a bare integer (valid JSON number text), non-finite numbers as `null`,
+  no legacy escapes, and no trailing comma. `space`/`replacer`/`maxDepth` are left
+  untouched. Honored by both the string and byte (`raw: true`) serializers. The
+  CLI exposes it as `--pure-json`.
+- **`nonFinite` stringify option.** `stringify(value, { nonFinite })` controls how
+  the non-finite numbers `Infinity`, `-Infinity`, and `NaN` (none of which is
+  valid JSON) are serialized: `'literal'` (default, unchanged behavior) emits them
+  verbatim; `'null'` emits `null` instead, matching the global `JSON.stringify`,
+  so the output is valid JSON; `'throw'` throws a `TypeError`. Honored by both the
+  string and byte (`raw: true`) serializers. The CLI exposes it as
+  `--non-finite <literal|null|throw>`.
+
 ### Changed
 
+- **CLI output is now JSON11 by default.** The `json11` CLI serializes with this
+  package's own `stringify` instead of the global `JSON.stringify`. This fixes a
+  crash — a documented-valid BigInt input (e.g. `{ "n": 1186694007922679455n }`)
+  previously threw `TypeError: Do not know how to serialize a BigInt` — but it
+  also changes the no-flag default: with no output flags the CLI now emits
+  JSON11 (bare-identifier keys, the weight-chosen quote, BigInt with the `n`
+  suffix), not strict JSON. New output-shaping flags map one-to-one onto
+  `stringify` options — `--quote`, `--quote-names`, `--no-bigint-suffix`,
+  `--trailing-comma`, `--legacy-escapes` — so the invoker composes the flavor
+  they want, or passes `--pure-json` for strict, valid JSON in one flag.
+  `--help` now lists every accepted flag. `Infinity`
+  and `NaN` are emitted literally by default (valid JSON11, invalid JSON); pass
+  `--non-finite null` to coerce them for valid JSON or `--non-finite throw` to
+  fail loudly.
 - `RawValue`'s internal fields (`bytes`/`preEscaped`/`quote`) no longer appear in
   the public type definitions (`dist/index.d.ts`/`.d.cts`) — they were never
   intended to be public. This is a type-surface tightening only (pre-1.0 alpha);

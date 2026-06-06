@@ -10,21 +10,14 @@ export type StringifyQuoteOptions = {
   quote?: string,
   quoteNames?: boolean,
 };
-export type Stringify11Options = StringifyQuoteOptions & {
-  /* Allow serializing BigInt values as <num>n.
-   * When undefined or true, BigInt values are serialized with the `n` suffix.
-   * When false, the `n` suffix is not included after the long numeral.
-   */
-  withBigInt?: boolean,
-  /* Add a trailing comma to arrays and objects, like JSON5.
-   * Applicable only when space is used for indenting.
-   */
-  trailingComma?: boolean,
-  /* Use legacy escape sequences, like JSON5.
-   * When true, \v, \0, and \x0-\x19 will be serialized as \v, \0, and \x0-\x19
-   * When undefined or false, \v, \0, and \x0-\x19 will be serialized as \u000b, \u0000, and \u0000-\u0019
-   */
-  withLegacyEscapes?: boolean,
+/* `pureJson` is mutually exclusive with the output-shaping options it subsumes.
+ * Because it overrides all of them at serialize time, the type forbids passing
+ * any of them alongside `pureJson: true`, so a caller can't set an option that
+ * would be silently ignored. `raw`/`maxDepth` (and `space`/`replacer` on
+ * `StringifyOptions`) are orthogonal to JSON validity and stay allowed in both
+ * arms. The two helper shapes are inlined to keep the public d.ts surface to
+ * just `StringifyQuoteOptions`/`Stringify11Options`/`StringifyOptions`. */
+export type Stringify11Options = {
   /* Byte-mode output. When true, `stringify` returns a Uint8Array instead of a
    * string, and recognizes `RawValue`/`RawString` nodes which it injects as raw
    * bytes (pre-escaped, spliced verbatim, or escaped from raw bytes) so a secret
@@ -36,7 +29,51 @@ export type Stringify11Options = StringifyQuoteOptions & {
    * deeply-nested value can overflow the JS call stack; this bounds it.
    * Defaults to util.MAX_DEPTH_DEFAULT. */
   maxDepth?: number,
-};
+} & (
+  | (StringifyQuoteOptions & {
+    /* Allow serializing BigInt values as <num>n.
+     * When undefined or true, BigInt values are serialized with the `n` suffix.
+     * When false, the `n` suffix is not included after the long numeral.
+     */
+    withBigInt?: boolean,
+    /* Add a trailing comma to arrays and objects, like JSON5.
+     * Applicable only when space is used for indenting.
+     */
+    trailingComma?: boolean,
+    /* Use legacy escape sequences, like JSON5.
+     * When true, \v, \0, and \x0-\x19 will be serialized as \v, \0, and \x0-\x19
+     * When undefined or false, \v, \0, and \x0-\x19 will be serialized as \u000b, \u0000, and \u0000-\u0019
+     */
+    withLegacyEscapes?: boolean,
+    /* How to serialize the non-finite numbers Infinity, -Infinity, and NaN, none
+     * of which is valid JSON.
+     *   'literal' (default) — emit them verbatim (`Infinity`/`-Infinity`/`NaN`),
+     *     valid JSON11 but invalid JSON. This is the historical behavior.
+     *   'null'    — emit `null` instead, matching the global `JSON.stringify`, so
+     *     the output is valid JSON.
+     *   'throw'   — throw a TypeError rather than emit an invalid value.
+     * Finite numbers are unaffected. */
+    nonFinite?: 'literal' | 'null' | 'throw',
+    /* Emit strict, valid JSON. When true this overrides the other output-shaping
+     * options: double quotes, quoted property names, BigInt as a bare integer
+     * (valid JSON number text — a consumer reading it as a double may lose
+     * precision), non-finite numbers as `null`, no legacy escapes, and no
+     * trailing comma. `space` is left untouched (indentation is valid JSON).
+     * Use this instead of composing the individual flags by hand. */
+    pureJson?: false,
+  })
+  | {
+    /* When `pureJson` is true the output-shaping options it overrides are
+     * forbidden, so none is set only to be silently ignored. */
+    quote?: never,
+    quoteNames?: never,
+    withBigInt?: never,
+    trailingComma?: never,
+    withLegacyEscapes?: never,
+    nonFinite?: never,
+    pureJson: true,
+  }
+);
 export type StringifyOptions = Stringify11Options & {
   replacer?: Replacer | AllowList | null,
   space?: string | number | String | Number | null,
@@ -99,6 +136,8 @@ export function stringify(
   let withLegacyEscapes: boolean | undefined;
   let quoteNames: boolean = false;
   let trailingComma: string = '';
+  let nonFinite: 'literal' | 'null' | 'throw' = 'literal';
+  let pureJson: boolean = false;
   let raw: boolean = false;
   let maxDepth: number = util.MAX_DEPTH_DEFAULT;
 
@@ -126,6 +165,8 @@ export function stringify(
     }
     withBigInt = replacerOrAllowListOrOptions.withBigInt;
     withLegacyEscapes = replacerOrAllowListOrOptions.withLegacyEscapes === true;
+    nonFinite = replacerOrAllowListOrOptions.nonFinite ?? 'literal';
+    pureJson = replacerOrAllowListOrOptions.pureJson === true;
     raw = replacerOrAllowListOrOptions.raw === true;
     maxDepth = replacerOrAllowListOrOptions.maxDepth ?? util.MAX_DEPTH_DEFAULT;
   } else {
@@ -157,8 +198,22 @@ export function stringify(
     if (options?.trailingComma) {
       trailingComma = ',';
     }
+    nonFinite = options?.nonFinite ?? 'literal';
+    pureJson = options?.pureJson === true;
     raw = options?.raw === true;
     maxDepth = options?.maxDepth ?? util.MAX_DEPTH_DEFAULT;
+  }
+
+  /* Evaluated last so it wins over every other output-shaping option: force the
+   * settings that make the output strict, valid JSON. `space`/`maxDepth`/
+   * `replacer` are orthogonal to JSON validity and left as the caller set them. */
+  if (pureJson) {
+    quote = '"';
+    quoteNames = true;
+    withBigInt = false;
+    withLegacyEscapes = false;
+    trailingComma = '';
+    nonFinite = 'null';
   }
 
   const quoteReplacements = buildQuoteReplacements(withLegacyEscapes);
@@ -184,6 +239,7 @@ export function stringify(
       replacer,
       propertyList,
       withBigInt,
+      nonFinite,
       maxDepth,
     });
   }
@@ -246,6 +302,12 @@ export function stringify(
     }
 
     if (typeof value === 'number') {
+      if (!isFinite(value) && nonFinite !== 'literal') {
+        if (nonFinite === 'throw') {
+          throw new TypeError(`Cannot serialize non-finite number ${String(value)} as JSON`);
+        }
+        return 'null';
+      }
       return String(value);
     }
 

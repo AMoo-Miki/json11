@@ -25,6 +25,7 @@ export type SerializeConfig = {
   replacer?: (this: any, key: string, value: any) => any,
   propertyList?: string[],
   withBigInt?: boolean,
+  nonFinite: 'literal' | 'null' | 'throw',
   maxDepth: number,
 };
 
@@ -54,7 +55,7 @@ const FALSE_BYTES = enc('false');
 const SKIP = Symbol('skip');
 
 export function serializeToBytes(value: any, config: SerializeConfig): Uint8Array | undefined {
-  const { gap, trailingComma, quoteContext, quoteNames, replacer, propertyList, withBigInt, maxDepth } = config;
+  const { gap, trailingComma, quoteContext, quoteNames, replacer, propertyList, withBigInt, nonFinite, maxDepth } = config;
   /* Open-ancestor set for O(1) cycle detection; doubles as the live nesting
    * depth via stack.size. Set.has matches Array.includes object identity. */
   const stack = new Set<any>();
@@ -149,6 +150,13 @@ export function serializeToBytes(value: any, config: SerializeConfig): Uint8Arra
     }
 
     if (typeof value === 'number') {
+      if (!isFinite(value) && nonFinite !== 'literal') {
+        if (nonFinite === 'throw') {
+          throw new TypeError(`Cannot serialize non-finite number ${String(value)} as JSON`);
+        }
+        writer.pushBytes(NULL_BYTES);
+        return;
+      }
       writer.pushBytes(enc(String(value)));
       return;
     }

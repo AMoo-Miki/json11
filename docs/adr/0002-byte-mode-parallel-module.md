@@ -86,3 +86,39 @@ A second, lighter touch was taken under the same provision: marking the
 it, so the emitted JS is byte-for-byte unchanged — no behavior to preserve, only
 import hygiene. Recorded here for the same reason the perf refactor is: any edit
 to a frozen file is surfaced, even one that cannot change runtime behavior.
+
+## Amendment (2026-06-06, second): additive serializer features may land in the frozen serializer when default-preserving and mirrored in both paths
+
+The first amendment limited frozen-path edits to changes with *no observable
+behavior change*. This goes one step further, with explicit owner sign-off, and
+supersedes that limit for the serializer: a **general serializer feature** (one
+that belongs to `stringify` as a whole, not to byte mode) may be added to
+`stringify.ts` directly, provided every condition holds:
+
+1. **Default-preserving.** With the new option unset (or at its default), the
+   serializer's output is byte-for-byte what it was before. The feature is gated
+   behind a new option; the existing default path is untouched.
+2. **Mirrored in both serializers.** The same feature is implemented in
+   `stringifyBytes.ts` in parallel, so the parallel-module architecture (the core
+   of this ADR) is preserved rather than eroded — the string serializer is not
+   becoming the sole home of the logic.
+3. **Locked by the differential suite.** A differential test asserts the byte
+   output equals the UTF-8 of the string output for the new option, so the two
+   implementations cannot drift (the same mechanism that justifies the duplication
+   in the first place).
+4. **Owner sign-off**, as with any frozen-path edit.
+
+The features landed under this provision were `nonFinite` (`'literal'` default,
+preserving the historical literal `Infinity`/`-Infinity`/`NaN` output; `'null'`
+and `'throw'` opt-in) and `pureJson` (an off-by-default umbrella that forces the
+strict-JSON option set). Both are serializer-wide options, not byte-mode concerns.
+
+What this does **not** reopen: MANDATORY RULE #5's core signal still stands — a
+*byte-mode* change that seems to need a string-path edit is still the
+stop-and-surface case, and no change may regress the inherited default output.
+"Frozen" now means: no byte-mode feature work, and no change to the **default**
+observable behavior of `parse.ts`/`stringify.ts`. An additive, default-preserving,
+both-paths-mirrored, differential-locked serializer feature is permitted with
+owner sign-off; everything else about the freeze is unchanged. (`parse.ts` has no
+analogous provision yet — it is untouched, and a parser feature would be its own
+decision.)

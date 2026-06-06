@@ -175,6 +175,18 @@ properties if a replacer array is specified.
   - `trailingComma`: (false) Add a trailing comma to arrays and objects; applies
     only when `space` is set.
   - `withLegacyEscapes`: (false) Emit JSON5-style `\v`, `\0`, and `\x..` escapes.
+  - `nonFinite`: (`'literal'`) How to serialize the non-finite numbers `Infinity`,
+    `-Infinity`, and `NaN`, none of which is valid JSON. `'literal'` emits them
+    verbatim (valid JSON11, invalid JSON); `'null'` emits `null` instead, matching
+    the global `JSON.stringify`, so the output is valid JSON; `'throw'` throws a
+    `TypeError`. Finite numbers are unaffected.
+  - `pureJson`: (false) Emit strict, valid JSON. Evaluated last, so it overrides
+    the other output-shaping options above no matter how they were set: double
+    quotes, quoted property names, BigInt as a bare integer (valid JSON number
+    text — a consumer reading it as a double may lose precision), non-finite
+    numbers as `null`, no legacy escapes, and no trailing comma. `space`,
+    `replacer`, and `maxDepth` are orthogonal to JSON validity and left as you set
+    them.
   - `raw`: (false) Byte mode. When `true`, `stringify` returns a `Uint8Array` of
     UTF-8 bytes instead of a string, and recognizes `RawValue`/`RawString` nodes
     that are injected into the output without becoming JS strings (see
@@ -296,8 +308,8 @@ tree in byte mode; it is injected by its escaped span.
 
 
 ## CLI
-Since JSON is more widely used than JSON11, this package includes a CLI for
-converting JSON11 to JSON and for validating the syntax of JSON11 documents.
+This package includes a CLI for converting/reformatting JSON11 documents and for
+validating their syntax.
 
 ### Installation
 ```sh
@@ -311,13 +323,43 @@ json11 [options] <file>
 
 If `<file>` is not provided, then STDIN is used.
 
+The CLI parses with JSON11 and serializes with JSON11's own `stringify`. The
+output-shaping flags map one-to-one onto `stringify`'s options and are a thin
+pass-through: with no flags the output is **JSON11** (`stringify`'s defaults —
+bare-identifier keys where possible, the weight-chosen quote, and BigInt values
+with the `n` suffix), **not** strict JSON. Compose the flags to choose the flavor
+you want, or pass `--pure-json` for strict, valid JSON:
+
+```sh
+json11 --pure-json <file>
+```
+
 #### Options:
-- `-c`, `--convert`: Convert `<file>` to JSON, writing alongside it as `<file>.json`
-- `-s`, `--space`: The number of spaces to indent or `t` for tabs
+- `-c`, `--convert`: Convert `<file>`, writing alongside it as `<file>.json`
+- `-s`, `--space <n|t|tab>`: The number of spaces to indent, or `t`/`tab` for tabs
+- `--quote <'|">`: Force `'` or `"` as the string quote
+- `--quote-names`: Quote object keys
+- `--no-bigint-suffix`: Emit BigInt values as bare integers (no `n` suffix). The
+  text is valid-JSON integer text; a JSON consumer that reads it as a double may
+  lose precision
+- `--trailing-comma`: Add a trailing comma (only affects output when `--space` is set)
+- `--legacy-escapes`: Use legacy escape sequences (`\v`, `\0`, `\x..`)
+- `--non-finite <mode>`: How to emit `Infinity`/`-Infinity`/`NaN` — `literal`
+  (default; valid JSON11, invalid JSON), `null` (valid JSON), or `throw`
+- `--pure-json`: Emit strict, valid JSON. Overrides the output-shaping flags above
+  (double quotes, quoted keys, bare-integer BigInt, non-finite as `null`);
+  `--space` still applies
 - `-o`, `--out-file [file]`: Output to the specified file, otherwise STDOUT
-- `-v`, `--validate`: Validate JSON11 but do not output JSON
+- `-v`, `--validate`: Validate JSON11 but do not output anything
 - `-V`, `--version`: Output the version number
 - `-h`, `--help`: Output usage information
+
+#### `Infinity`/`NaN`
+By default the CLI emits `Infinity`/`-Infinity`/`NaN` literally (valid JSON11,
+invalid JSON). To get valid JSON from a document containing them, pass
+`--non-finite null` (coerces them to `null`, like the global `JSON.stringify`) or
+`--non-finite throw` to fail loudly instead. `--pure-json` implies
+`--non-finite null` as part of producing strict JSON.
 
 ## Contributing
 ### Development

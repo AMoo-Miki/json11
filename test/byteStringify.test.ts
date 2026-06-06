@@ -52,6 +52,20 @@ describe('stringify(value, { raw: true }) — byte output equals utf8(string out
     }
   });
 
+  it('mirrors nonFinite handling (byte ≡ utf8 of string output)', () => {
+    const v = { a: Infinity, b: -Infinity, c: NaN, d: [1.5, Infinity] };
+    for (const mode of ['literal', 'null'] as const) {
+      expect(dec(bytes(v, { nonFinite: mode, raw: true }))).toBe(stringify(v, { nonFinite: mode }));
+    }
+    expect(() => bytes(v, { nonFinite: 'throw', raw: true })).toThrow(TypeError);
+  });
+
+  it('mirrors pureJson (byte ≡ utf8 of string output, with space still applied)', () => {
+    const v = { 'a-b': "he'llo", n: Infinity, m: NaN, big: 10n, arr: [1.5, -Infinity] };
+    const opts = { pureJson: true as const, space: 2 };
+    expect(dec(bytes(v, { ...opts, raw: true }))).toBe(stringify(v, opts));
+  });
+
   it('mirrors the capped space (>10) as a byte differential', () => {
     const v = { a: 1 };
     expect(dec(bytes(v, { space: 20, raw: true }))).toBe(stringify(v, { space: 20 }));
