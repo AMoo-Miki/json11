@@ -20,6 +20,10 @@ export type Parse11Options = {
    *            always decoded; see README).
    */
   raw?: 'off' | 'values' | 'all',
+  /* Maximum digit-buffer length accepted for a BigInt literal (the explicit
+   * `…n` form and the withLongNumerals promotion). Defaults to
+   * util.MAX_NUMERIC_DIGITS_DEFAULT; bounds the super-linear BigInt(...) cost. */
+  maxNumericDigits?: number,
 }
 
 export function parse<T = any>(
@@ -61,6 +65,8 @@ export function parse<T = any>(
   let doubleQuote: boolean;
   let sign: number;
   let c: string | undefined;
+
+  const maxNumericDigits = options?.maxNumericDigits ?? util.MAX_NUMERIC_DIGITS_DEFAULT;
 
   const lexStates: { [key: string]: () => any } = {
     default() {
@@ -487,6 +493,11 @@ export function parse<T = any>(
 
     bigInt() {
       if (buffer?.length && (util.isInteger(buffer) || util.isHex(buffer))) {
+        if (buffer.length > maxNumericDigits) {
+          throw syntaxError(
+            `JSON11: numeric literal of length ${buffer.length} exceeds the ${maxNumericDigits}-digit BigInt cap at ${line}:${column}`,
+          );
+        }
         read();
         return newToken('bigint', BigInt(sign) * BigInt(buffer));
       }
@@ -840,6 +851,11 @@ export function parse<T = any>(
 
     if (options?.withLongNumerals) {
       if (num > Number.MAX_SAFE_INTEGER || num < Number.MIN_SAFE_INTEGER) {
+        if (buffer!.length > maxNumericDigits) {
+          throw syntaxError(
+            `JSON11: numeric literal of length ${buffer!.length} exceeds the ${maxNumericDigits}-digit BigInt cap at ${line}:${column}`,
+          );
+        }
         try {
           return newToken('bigint', BigInt(sign) * BigInt(buffer!));
         } catch (ex) {

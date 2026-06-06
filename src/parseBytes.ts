@@ -18,6 +18,10 @@ export type RawMode = 'off' | 'values' | 'all';
 export type ParseBytesOptions = {
   withLongNumerals?: boolean;
   raw?: RawMode;
+  /* Maximum digit-buffer length accepted for a BigInt literal (the explicit
+   * `…n` form and the withLongNumerals promotion). Defaults to
+   * util.MAX_NUMERIC_DIGITS_DEFAULT; bounds the super-linear BigInt(...) cost. */
+  maxNumericDigits?: number;
 };
 
 export function parseBytes<T = any>(
@@ -26,6 +30,7 @@ export function parseBytes<T = any>(
   options?: ParseBytesOptions,
 ): T {
   const rawValues = options?.raw === 'values' || options?.raw === 'all';
+  const maxNumericDigits = options?.maxNumericDigits ?? util.MAX_NUMERIC_DIGITS_DEFAULT;
 
   let parseState: string = 'start';
   let stack: any[] = [];
@@ -462,6 +467,12 @@ export function parseBytes<T = any>(
 
     bigInt() {
       if (buffer?.length && (util.isInteger(buffer) || util.isHex(buffer))) {
+        if (buffer.length > maxNumericDigits) {
+          throw byteError(
+            `numeric literal of length ${buffer.length} exceeds the ${maxNumericDigits}-digit BigInt cap`,
+            pos,
+          );
+        }
         read();
         return newToken('bigint', BigInt(sign) * BigInt(buffer));
       }
@@ -805,6 +816,12 @@ export function parseBytes<T = any>(
 
     if (options?.withLongNumerals) {
       if (num > Number.MAX_SAFE_INTEGER || num < Number.MIN_SAFE_INTEGER) {
+        if (buffer!.length > maxNumericDigits) {
+          throw byteError(
+            `numeric literal of length ${buffer!.length} exceeds the ${maxNumericDigits}-digit BigInt cap`,
+            pos,
+          );
+        }
         try {
           return newToken('bigint', BigInt(sign) * BigInt(buffer!));
         } catch (ex) {

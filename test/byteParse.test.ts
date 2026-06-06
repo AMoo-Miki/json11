@@ -94,6 +94,77 @@ describe('parse(Uint8Array) — differential equivalence with parse(string)', ()
   });
 });
 
+describe('parse(Uint8Array) — withLongNumerals byte/string differential', () => {
+  /* Mirrors the string-parser withLongNumerals tests across the safe/unsafe
+   * boundary so the byte numeral path is proven to agree with the string path
+   * in every state (unset/false/true), including the not-an-integer fallback. */
+  const bigNumeral = 3n * BigInt(Number.MAX_SAFE_INTEGER);
+  const numerals = [
+    bigNumeral.toString(),
+    (1n + bigNumeral).toString(),
+    (2n + bigNumeral).toString(),
+    (3n + bigNumeral).toString(),
+    String(Number.MAX_SAFE_INTEGER),
+    (BigInt(Number.MAX_SAFE_INTEGER) + 2n).toString(),
+  ];
+  const text = `[${numerals.join(',')}]`;
+
+  for (const withLongNumerals of [undefined, false, true] as const) {
+    it(`agrees with the string parser for withLongNumerals=${String(withLongNumerals)}`, () => {
+      const opts = withLongNumerals === undefined ? undefined : { withLongNumerals };
+      expect(parse(enc(text), null, opts)).toEqual(parse(text, null, opts));
+    });
+  }
+});
+
+describe('parse — BigInt digit-length cap (DoS)', () => {
+  const DEFAULT_CAP = 10000;
+
+  it('throws a typed error on a decimal BigInt literal over the default cap, both parsers', () => {
+    const over = '9'.repeat(DEFAULT_CAP + 1) + 'n';
+    expect(() => parse(over)).toThrow(SyntaxError);
+    expect(() => parse(enc(over))).toThrow(SyntaxError);
+  });
+
+  it('accepts a decimal BigInt literal at exactly the default cap and agrees', () => {
+    const atCap = '9'.repeat(DEFAULT_CAP) + 'n';
+    const fromString = parse(atCap);
+    expect(fromString).toBe(BigInt('9'.repeat(DEFAULT_CAP)));
+    expect(parse(enc(atCap))).toBe(fromString);
+  });
+
+  describe('with a lowered explicit cap', () => {
+    const cap = 64;
+    const opts = { maxNumericDigits: cap };
+
+    it('throws a typed error on a decimal BigInt literal over the cap, both parsers', () => {
+      const over = '9'.repeat(cap + 1) + 'n';
+      expect(() => parse(over, null, opts)).toThrow(SyntaxError);
+      expect(() => parse(enc(over), null, opts)).toThrow(SyntaxError);
+    });
+
+    it('accepts a decimal BigInt literal at exactly the cap and agrees', () => {
+      const atCap = '9'.repeat(cap) + 'n';
+      const fromString = parse(atCap, null, opts);
+      expect(fromString).toBe(BigInt('9'.repeat(cap)));
+      expect(parse(enc(atCap), null, opts)).toBe(fromString);
+    });
+
+    it('throws a typed error on a hex BigInt literal over the cap, both parsers', () => {
+      const overHex = '0x' + 'f'.repeat(cap + 1) + 'n';
+      expect(() => parse(overHex, null, opts)).toThrow(SyntaxError);
+      expect(() => parse(enc(overHex), null, opts)).toThrow(SyntaxError);
+    });
+
+    it('throws a typed error on a withLongNumerals promotion over the cap, both parsers', () => {
+      const overInt = '9'.repeat(cap + 1);
+      const promo = { withLongNumerals: true, maxNumericDigits: cap };
+      expect(() => parse(overInt, null, promo)).toThrow(SyntaxError);
+      expect(() => parse(enc(overInt), null, promo)).toThrow(SyntaxError);
+    });
+  });
+});
+
 describe('parse(Uint8Array, …, { raw }) — borrowed spans', () => {
   it('returns RawString for values, plain strings for keys', () => {
     const doc: any = parse(enc('{"subkey":"S3cr3t\\u0041","meta":"ok"}'), null, { raw: 'values' });

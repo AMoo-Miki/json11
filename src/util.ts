@@ -1,5 +1,12 @@
 import unicode from './unicode';
 
+/* Default digit-length cap for numeric tokens that feed BigInt(...). Base-10 →
+ * BigInt conversion is super-linear in the digit count, so an attacker-sized
+ * literal is a synchronous CPU/event-loop DoS; the cap bounds that work. Shared
+ * by both parsers so the byte and string paths reject identically (the
+ * differential invariant). Callers may override via the maxNumericDigits option. */
+export const MAX_NUMERIC_DIGITS_DEFAULT = 10000;
+
 export const isSpaceSeparator = (c?: string): boolean => {
   return typeof c === 'string' && unicode.Space_Separator.test(c);
 };
