@@ -594,6 +594,24 @@ describe('stringify(value, options)', () => {
         expect(stringify([1, [2, 3]], { space: 2 })).toBe('[\n  1,\n  [\n    2,\n    3\n  ]\n]');
       });
     });
+
+    describe.concurrent('cap and edge values', () => {
+      it('caps a numeric space at 10', () => {
+        expect(stringify({ a: 1 }, { space: 20 })).toBe(`{\n${' '.repeat(10)}a: 1\n}`);
+      });
+
+      it('caps a string space at its first 10 chars', () => {
+        expect(stringify({ a: 1 }, { space: '----------XXXX' })).toBe('{\n----------a: 1\n}');
+      });
+
+      it('produces no indent for space 0', () => {
+        expect(stringify({ a: 1 }, { space: 0 })).toBe('{a:1}');
+      });
+
+      it('produces no indent for a negative space', () => {
+        expect(stringify({ a: 1 }, { space: -1 })).toBe('{a:1}');
+      });
+    });
   });
 
   describe('trailingComma', () => {

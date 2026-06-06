@@ -292,18 +292,18 @@ describe('parse(Uint8Array) — negative / adversarial', () => {
 
   it('never reads out of bounds on any truncation of a valid document', () => {
     const full = enc('{a:1,b:[1,"two",3n],c:{d:"caf\u00e9 \u{1F600}",e:0xFF}}');
+    const expected = parse(full);
     for (let n = 0; n <= full.length; n++) {
       const slice = full.subarray(0, n);
-      let threw = false;
-      let result: any;
-      try {
-        result = parse(slice);
-      } catch (ex) {
-        threw = true;
-        expect(ex).toBeInstanceOf(SyntaxError);
+      if (n === full.length) {
+        // The complete document parses and equals the canonical parse.
+        expect(parse(slice)).toEqual(expected);
+      } else {
+        // Every proper prefix of this single-object document is incomplete, so it
+        // must fail with a typed SyntaxError (an OOB read would surface as a
+        // RangeError and fail this assertion) — never a partial/garbage value.
+        expect(() => parse(slice)).toThrow(SyntaxError);
       }
-      // either a clean parse (only when the slice is itself complete) or a typed throw
-      expect(threw || result !== undefined || n === full.length).toBe(true);
     }
   });
 });

@@ -1,7 +1,62 @@
-import { expect, describe, it } from 'vitest';
+import { expect, describe, it, vi } from 'vitest';
 import { parse, stringify, RawString, RawValue, unsafeEncodeAsJSON } from '../src';
 import { QUOTE_SINGLE } from '../src/raw';
 import { dec, enc, makeRng, randString } from './_helpers';
+
+/* Wrap every byte→String entry point and record each call, so a region asserted
+ * to be byte-only can prove it made zero of them (mirrors heapHygiene B1). The
+ * wrapper bodies call only push/apply, so they cannot recurse through String(…). */
+function installByteToStringSpies() {
+  const calls: string[] = [];
+  const saved: Array<[any, string, any]> = [];
+  const wrap = (obj: any, key: string) => {
+    if (!obj || typeof obj[key] !== 'function') return;
+    const orig = obj[key];
+    saved.push([obj, key, orig]);
+    obj[key] = function (...a: any[]) {
+      calls.push(key);
+      return orig.apply(this, a);
+    };
+  };
+  wrap(String, 'fromCharCode');
+  wrap(String, 'fromCodePoint');
+  wrap(globalThis as any, 'String');
+  wrap((globalThis as any).TextDecoder.prototype, 'decode');
+  for (const m of ['toString', 'utf8Slice', 'latin1Slice', 'asciiSlice', 'ucs2Slice', 'hexSlice']) {
+    wrap(Buffer.prototype as any, m);
+  }
+  return {
+    calls,
+    restore() {
+      for (const [obj, key, orig] of saved) obj[key] = orig;
+    },
+  };
+}
+
+/* Records the numeric args handed to fromCharCode/fromCodePoint so a region that
+ * legitimately stringifies a *key* can still prove the *value*'s code points were
+ * never stringified, even one char at a time (mirrors heapHygiene B2). Leaves the
+ * String object and its other statics intact. */
+function installFromCodeArgSpies() {
+  const args: number[] = [];
+  const saved: Array<[any, string, any]> = [];
+  const wrap = (obj: any, key: string) => {
+    const orig = obj[key];
+    saved.push([obj, key, orig]);
+    obj[key] = function (...a: any[]) {
+      for (const x of a) if (typeof x === 'number') args.push(x);
+      return orig.apply(this, a);
+    };
+  };
+  wrap(String, 'fromCharCode');
+  wrap(String, 'fromCodePoint');
+  return {
+    args,
+    restore() {
+      for (const [obj, key, orig] of saved) obj[key] = orig;
+    },
+  };
+}
 
 describe('RawString', () => {
   it('span aliases the source, copy does not', () => {
@@ -19,6 +74,11 @@ describe('RawString', () => {
       ['\\b\\f\\n\\r\\t\\v\\0', '\b\f\n\r\t\v\0'],
       ['\\x41\\x7f', 'A\x7f'],
       ['\\uD83D\\uDE00', '\u{1F600}'],
+      // 2-byte UTF-8 emitter: a \u escape producing U+0080..U+07FF is the only
+      // path that reaches ByteWriter.pushCodePoint's `cp < 0x800` arm; pin it
+      // (and the 3-byte boundary at U+0800) against toString().
+      ['\\u00e9', '\u00e9'],
+      ['\\u0800', '\u0800'],
       ['caf\u00e9', 'caf\u00e9'],
       ['line\\\ncont', 'linecont'],
       ['\\a\\b\\q', 'a\bq'],
@@ -140,16 +200,43 @@ describe('Bar #4 — escape consistency, byte-identical span splice', () => {
     }
   });
 
-  it('the secret value is never produced as a JS String end-to-end', () => {
-    // Guard: replacing String.prototype methods that would coerce the secret
-    // would surface here, but more importantly the value types are byte arrays.
-    const secretBuf = enc('{"subkey":"do-not-stringify-me","meta":"ok"}');
+  it('the secret value is never produced as a JS String (byte-only accessors; value code points never stringified)', () => {
+    // A distinctive PUA/astral value: even a char-by-char stringify of it would
+    // surface U+E007 (BMP) or the surrogate halves of U+10FFFD as a fromCode*
+    // argument. Parsing happens OUTSIDE the spies because it legitimately
+    // stringifies the keys ("subkey"/"meta").
+    const secretBuf = enc('{"subkey":"\uE007do-not-stringify-me\u{10FFFD}","meta":"ok"}');
     const doc: any = parse(secretBuf, null, { raw: 'values' });
     expect(doc.subkey).toBeInstanceOf(RawString);
-    // Move it without ever calling toString on the secret:
-    const out = stringify({ moved: RawValue.escaped(doc.subkey.span(), doc.subkey.quote) }, { raw: true })!;
+
+    // 1) The value's own accessors funnel through ZERO byte→String primitives.
+    const counting = installByteToStringSpies();
+    try {
+      doc.subkey.span();
+      doc.subkey.decode();
+      doc.subkey.copy();
+    } finally {
+      counting.restore();
+    }
+    expect(counting.calls).toEqual([]);
+
+    // 2) Across the full move (span → reinject), the value's code points never
+    //    reach fromCharCode/fromCodePoint — even though serializing the *key*
+    //    "moved" legitimately does. That is what "never a String end-to-end" means.
+    const argRec = installFromCodeArgSpies();
+    let out: Uint8Array;
+    try {
+      out = stringify({ moved: RawValue.escaped(doc.subkey.span(), doc.subkey.quote) }, { raw: true })!;
+    } finally {
+      argRec.restore();
+    }
     expect(out).toBeInstanceOf(Uint8Array);
-    // The non-secret metadata may be decoded to a String safely.
+    expect(argRec.args).not.toContain(0xe007); // BMP value char
+    expect(argRec.args).not.toContain(0x10fffd); // astral value char (fromCodePoint)
+    expect(argRec.args).not.toContain(0xdbff); // its high surrogate (fromCharCode)
+    expect(argRec.args).not.toContain(0xdffd); // its low surrogate (fromCharCode)
+
+    // The non-secret metadata may be decoded to a String safely (outside the spies).
     expect(doc.meta.unsafeDecodeToString()).toBe('ok');
   });
 });
@@ -217,5 +304,31 @@ describe('unsafeEncodeAsJSON — the deliberate whole-tree JSON opt-in', () => {
   it('decodes a RawValue defensively via the StringSink path', () => {
     const plain = unsafeEncodeAsJSON({ v: RawValue.escaped(enc('a\\nb'), 0x22) }) as any;
     expect(plain.v).toBe('a\nb');
+  });
+});
+
+describe('byte parser separatorWarn — fires on the value path and leaks no value bytes', () => {
+  /* The byte parser's separatorWarn (the only console output reachable from the
+   * raw value path) must fire on a raw U+2028/U+2029 inside a value AND carry no
+   * value-derived bytes — a direct corollary of the "no value bytes in messages"
+   * invariant. Every other byte suite silences this globally; this file installs
+   * no blanket silencer, so the spy below is the sole controller of console.warn.
+   * The test never decodes the parsed value, so it materializes no String of it. */
+  it('warns once with the fixed advisory and none of the surrounding value bytes', () => {
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => null);
+    try {
+      // Distinctive ascii markers bracket a single raw U+2028 in the value.
+      const doc: any = parse(enc('{"k":"LEFTMARK\u2028RIGHTMARK"}'), null, { raw: 'values' });
+      expect(doc.k).toBeInstanceOf(RawString);
+
+      expect(spy).toHaveBeenCalledTimes(1);
+      const msg = String(spy.mock.calls[0][0]);
+      expect(msg).toContain('not valid ECMAScript');
+      // The fixed advisory must not embed the value's surrounding content.
+      expect(msg).not.toContain('LEFTMARK');
+      expect(msg).not.toContain('RIGHTMARK');
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

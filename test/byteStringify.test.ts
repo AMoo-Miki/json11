@@ -12,6 +12,9 @@ describe('stringify(value, { raw: true }) — byte output equals utf8(string out
       [1, 'two', 3n, null, [false]], { a: 1, 'b c': 'x', n: null },
       { nested: { deep: { x: ['a\\b', "q'q", 'd"d'] } } },
       { '\0\x01\x1f\u2028\u2029': 'controls' },
+      // Boxed primitives: the byte serializer re-implements the unwrap arms, so
+      // making them differential pins those arms against the string serializer.
+      new Number(-1.2), new String('abc'), new Boolean(true), new Boolean(false),
     ];
     for (const v of vals) {
       expect(dec(bytes(v, { raw: true }))).toBe(stringify(v));
@@ -41,6 +44,12 @@ describe('stringify(value, { raw: true }) — byte output equals utf8(string out
     }
   });
 
+  it('mirrors the capped space (>10) as a byte differential', () => {
+    const v = { a: 1 };
+    expect(dec(bytes(v, { space: 20, raw: true }))).toBe(stringify(v, { space: 20 }));
+    expect(dec(bytes(v, { space: '----------XXXX', raw: true }))).toBe(stringify(v, { space: '----------XXXX' }));
+  });
+
   it('matches with positional (replacer, space) and options forms', () => {
     const v = { a: 1, b: 2, c: 3 };
     const replacer = (k: string, val: any) => (k === 'b' ? undefined : val);
@@ -51,6 +60,80 @@ describe('stringify(value, { raw: true }) — byte output equals utf8(string out
   it('returns undefined for non-serializable roots (like the string serializer)', () => {
     expect(stringify(undefined, { raw: true })).toBeUndefined();
     expect(stringify(() => {}, { raw: true })).toBeUndefined();
+  });
+});
+
+describe('stringify(value, { raw: true }) — toJSON ladder and Date (byte ≡ string)', () => {
+  /* The byte serializer re-implements the toJSON11 > toJSON5 > toJSON precedence
+   * ladder; randValue cannot construct a toJSON-bearing object, so without these
+   * the byte ladder is never exercised. These mirror the string-serializer
+   * fixtures (test/stringify.test.ts) and bolt the two serializers together via
+   * the existing dec(bytes(v,{raw:true})) === stringify(v) equality. */
+  class ToJSON {
+    toJSON() { return { a: 1, b: 2 }; }
+  }
+  class ToJSONKey {
+    toJSON(key: any) { return key === 'a' ? 1 : 2; }
+  }
+  class ToJSON5 {
+    toJSON5() { return { a: 1, b: 2 }; }
+  }
+  class ToJSON5Key {
+    toJSON5(key: any) { return key === 'a' ? 1 : 2; }
+  }
+  class ToJSON11 {
+    toJSON11() { return { a: 1, b: 2 }; }
+  }
+  class ToJSON11Key {
+    toJSON11(key: any) { return key === 'a' ? 1 : 2; }
+  }
+  class Json11OverJson {
+    toJSON() { return { a: 1, b: 2 }; }
+    toJSON11() { return { a: 2, b: 2 }; }
+  }
+  class Json11OverJson5 {
+    toJSON5() { return { a: 1, b: 2 }; }
+    toJSON11() { return { a: 2, b: 2 }; }
+  }
+  class Json5OverJson {
+    toJSON() { return { a: 1, b: 2 }; }
+    toJSON5() { return { a: 2, b: 2 }; }
+  }
+
+  const vals: any[] = [
+    new Date('2016-01-01T00:00:00.000Z'),
+    new ToJSON(),
+    { a: new ToJSONKey(), b: new ToJSONKey() },
+    new ToJSON5(),
+    { a: new ToJSON5Key(), b: new ToJSON5Key() },
+    new ToJSON11(),
+    { a: new ToJSON11Key(), b: new ToJSON11Key() },
+    new Json11OverJson(),
+    new Json11OverJson5(),
+    new Json5OverJson(),
+  ];
+
+  it('matches the string serializer for each toJSON*/Date fixture', () => {
+    for (const v of vals) {
+      expect(dec(bytes(v, { raw: true }))).toBe(stringify(v));
+    }
+  });
+});
+
+describe('stringify(value, { raw: true }) — circular structure throws (byte ≡ string)', () => {
+  /* The byte serializer carries its own stack.includes cycle guard; dropping it
+   * would recurse to a RangeError instead of the documented TypeError. A cyclic
+   * value can't go through the equality differential, so this is throw-parity. */
+  it('throws the documented TypeError on a circular object', () => {
+    const a: any = {};
+    a.a = a;
+    expect(() => stringify(a, { raw: true })).toThrow('Converting circular structure to JSON11');
+  });
+
+  it('throws the documented TypeError on a circular array', () => {
+    const a: any = [];
+    a[0] = a;
+    expect(() => stringify(a, { raw: true })).toThrow('Converting circular structure to JSON11');
   });
 });
 
