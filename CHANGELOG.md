@@ -16,6 +16,16 @@ This project follows [Semantic Versioning]; the format is based on
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html
 [Keep a Changelog]: https://keepachangelog.com/en/1.1.0/
 
+## [Unreleased]
+
+### Changed
+
+- `RawValue`'s internal fields (`bytes`/`preEscaped`/`quote`) no longer appear in
+  the public type definitions (`dist/index.d.ts`/`.d.cts`) — they were never
+  intended to be public. This is a type-surface tightening only (pre-1.0 alpha);
+  the fields still exist at runtime, unchanged and non-enumerable, and no runtime
+  behavior changes.
+
 ## [3.0.0-alpha.1]
 
 The first independent JSON11 release (forked from JSON5 v2.2.3).

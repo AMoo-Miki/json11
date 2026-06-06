@@ -5,8 +5,16 @@
   "bin": "./dist/cli.mjs",
   "browser": "./dist/umd/index.js",
   "exports": {
-    "import": "./dist/es/index.mjs",
-    "require": "./dist/cjs/index.cjs"
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/es/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/cjs/index.cjs"
+      }
+    }
   },
   "main": "./dist/cjs/index.cjs",
   "types": "./dist/index.d.ts",
@@ -20,7 +28,7 @@
     "build:lib": "vite build",
     "build:cli": "vite build --mode cli",
     "build:mini": "MINIFY=true vite build",
-    "build:type": "dts-bundle-generator -o ./dist/index.d.ts ./src/index.ts --no-banner --export-referenced-types --umd-module-name=JSON11",
+    "build:type": "dts-bundle-generator -o ./dist/index.d.ts ./src/index.ts --no-banner --export-referenced-types --umd-module-name=JSON11 && cp ./dist/index.d.ts ./dist/index.d.cts",
     "lint": "eslint .",
     "lint-fix": "eslint --fix .",
     "test": "vitest --run",

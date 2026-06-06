@@ -422,12 +422,13 @@ Object.defineProperty(RawString.prototype, NODE_INSPECT, {
  * either pre-escaped inner bytes spliced verbatim between quotes, or raw
  * (unescaped) bytes that JSON11 escapes into the output using its own escaper. */
 export class RawValue {
-  /* @internal Read cross-module by the byte serializer; `declare` keeps the type
-   * while the constructor defines it non-enumerable (so a property-walk cannot
-   * dump the bytes). */
+  /** Read cross-module by the byte serializer; `declare` keeps the type while the
+   * constructor defines it non-enumerable (so a property-walk cannot dump the
+   * bytes).
+   * @internal */
   declare readonly bytes: Uint8Array;
-  /* @internal */ declare readonly preEscaped: boolean;
-  /* @internal */ declare readonly quote: QuoteByte | 0;
+  /** @internal */ declare readonly preEscaped: boolean;
+  /** @internal */ declare readonly quote: QuoteByte | 0;
 
   private constructor(bytes: Uint8Array, preEscaped: boolean, quote: QuoteByte | 0) {
     Object.defineProperty(this, 'bytes', { value: bytes, enumerable: false, writable: false });

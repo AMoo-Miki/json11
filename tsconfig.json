@@ -17,6 +17,7 @@
     "sourceRoot": "../src",
     "allowJs": false,
     "removeComments": true,
+    "stripInternal": true,
 
     /* Linting */
     "strict": true,
