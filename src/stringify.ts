@@ -86,7 +86,10 @@ export function stringify(
   space?: string | number | String | Number | null,
   options?: Stringify11Options,
 ): string | undefined | Uint8Array {
-  const stack: any[] = [];
+  /* Open-ancestor set for cycle detection: membership is O(1) so a deeply
+   * nested value does not pay an O(depth) scan per node. Set.has uses
+   * SameValueZero, identical object identity to the prior Array.includes. */
+  const stack = new Set<any>();
   let indent = '';
   let propertyList: string[] | undefined;
   let replacer: Replacer | undefined;
@@ -258,14 +261,14 @@ export function stringify(
   }
 
   function serializeObject(value: any): string {
-    if (stack.includes(value)) {
+    if (stack.has(value)) {
       throw TypeError('Converting circular structure to JSON11');
     }
-    if (stack.length >= maxDepth) {
+    if (stack.size >= maxDepth) {
       throw TypeError(`JSON11: maximum nesting depth ${maxDepth} exceeded`);
     }
 
-    stack.push(value);
+    stack.add(value);
 
     let stepback = indent;
     indent = indent + gap;
@@ -298,20 +301,20 @@ export function stringify(
       }
     }
 
-    stack.pop();
+    stack.delete(value);
     indent = stepback;
     return final;
   }
 
   function serializeArray(value: any[]): string {
-    if (stack.includes(value)) {
+    if (stack.has(value)) {
       throw TypeError('Converting circular structure to JSON11');
     }
-    if (stack.length >= maxDepth) {
+    if (stack.size >= maxDepth) {
       throw TypeError(`JSON11: maximum nesting depth ${maxDepth} exceeded`);
     }
 
-    stack.push(value);
+    stack.add(value);
 
     let stepback = indent;
     indent = indent + gap;
@@ -335,7 +338,7 @@ export function stringify(
       }
     }
 
-    stack.pop();
+    stack.delete(value);
     indent = stepback;
     return final;
   }

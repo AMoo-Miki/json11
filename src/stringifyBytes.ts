@@ -55,7 +55,9 @@ const SKIP = Symbol('skip');
 
 export function serializeToBytes(value: any, config: SerializeConfig): Uint8Array | undefined {
   const { gap, trailingComma, quoteContext, quoteNames, replacer, propertyList, withBigInt, maxDepth } = config;
-  const stack: any[] = [];
+  /* Open-ancestor set for O(1) cycle detection; doubles as the live nesting
+   * depth via stack.size. Set.has matches Array.includes object identity. */
+  const stack = new Set<any>();
   const gapBytes = enc(gap);
   const pretty = gap !== '';
 
@@ -295,18 +297,18 @@ export function serializeToBytes(value: any, config: SerializeConfig): Uint8Arra
   }
 
   function writeObject(value: any): void {
-    if (stack.includes(value)) {
+    if (stack.has(value)) {
       throw TypeError('Converting circular structure to JSON11');
     }
-    if (stack.length >= maxDepth) {
+    if (stack.size >= maxDepth) {
       throw TypeError(`JSON11: maximum nesting depth ${maxDepth} exceeded`);
     }
 
-    stack.push(value);
+    stack.add(value);
 
-    /* The member indent is the gap repeated per open container (stack.length,
+    /* The member indent is the gap repeated per open container (stack size,
      * counting this object); the closing brace steps back one level. */
-    const depth = stack.length;
+    const depth = stack.size;
     const keys = propertyList || Object.keys(value);
 
     writer.pushByte(BYTE_LBRACE);
@@ -334,20 +336,20 @@ export function serializeToBytes(value: any, config: SerializeConfig): Uint8Arra
     }
     writer.pushByte(BYTE_RBRACE);
 
-    stack.pop();
+    stack.delete(value);
   }
 
   function writeArray(value: any[]): void {
-    if (stack.includes(value)) {
+    if (stack.has(value)) {
       throw TypeError('Converting circular structure to JSON11');
     }
-    if (stack.length >= maxDepth) {
+    if (stack.size >= maxDepth) {
       throw TypeError(`JSON11: maximum nesting depth ${maxDepth} exceeded`);
     }
 
-    stack.push(value);
+    stack.add(value);
 
-    const depth = stack.length;
+    const depth = stack.size;
     const len = value.length;
 
     writer.pushByte(BYTE_LBRACKET);
@@ -374,7 +376,7 @@ export function serializeToBytes(value: any, config: SerializeConfig): Uint8Arra
     }
     writer.pushByte(BYTE_RBRACKET);
 
-    stack.pop();
+    stack.delete(value);
   }
 }
 

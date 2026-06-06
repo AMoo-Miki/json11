@@ -58,3 +58,25 @@ fuzz), not by sharing the lexer.
   regress the string path — stop and surface.
 - New byte-scanning code carries an adversarial test in the same change (ADR
   0007).
+
+## Amendment (2026-06-06): the freeze bars byte-mode edits, not identity-preserving perf refactors
+
+The freeze (and MANDATORY RULE #5) exists to stop a *byte-mode feature* from
+leaking into and regressing the inherited string lexer/serializer. It was never
+meant to forbid a general, byte-mode-agnostic performance refactor of the string
+path that leaves observable behavior byte-for-byte identical.
+
+One such refactor was taken with owner sign-off: the serializer cycle check moved
+from `Array.prototype.includes` (O(depth) per node) to a `Set` (O(1)), applied
+identically to both `stringify.ts` and `stringifyBytes.ts`. It is not a byte-mode
+change; `Set.has` uses SameValueZero, the same object identity as `includes`, so
+the differential and spec suites stay green by construction (measured +31% on
+deep-nested string serialization, flat on shallow documents).
+
+The provision this amends: "frozen" means **no byte-mode feature work and no
+behavior change** to `parse.ts`/`stringify.ts` — not "no edits ever". A
+behavior-preserving perf change to the string path is allowed when (1) it is not
+a byte-mode feature, (2) it is proven behavior-identical by the existing
+differential + spec suites, and (3) the owner signs off in the same way a string
+bug fix is sanctioned. A byte-mode change that *seems* to need a string-path edit
+is still the stop-and-surface signal the original rule describes.
