@@ -63,6 +63,48 @@ describe('parse(Uint8Array) — positive', () => {
     expect(parse(enc('{a:1,b:2}'), (k, v) => (k === 'a' ? 'revived' : v))).toEqual({ a: 'revived', b: 2 });
   });
 
+  it('reviver deletes an array element as a hole on undefined (byte ≡ string ≡ JSON.parse)', () => {
+    const drop = (k: string, v: any) => (v === 20 ? undefined : v);
+    const fromBytes = parse(enc('[10,20,30]'), drop) as any[];
+    const fromString = parse('[10,20,30]', drop) as any[];
+    const fromJSON = JSON.parse('[10,20,30]', drop) as any[];
+
+    expect(fromBytes.length).toBe(3);
+    expect(1 in fromBytes).toBe(false);
+    expect(Object.keys(fromBytes)).not.toContain('1');
+
+    const visited: any[] = [];
+    fromBytes.forEach((v) => visited.push(v));
+    expect(visited).toEqual([10, 30]);
+
+    expect(1 in fromBytes).toBe(1 in fromString);
+    expect(1 in fromBytes).toBe(1 in fromJSON);
+    expect(Object.keys(fromBytes)).toEqual(Object.keys(fromString));
+    expect(Object.keys(fromBytes)).toEqual(Object.keys(fromJSON));
+    expect(fromBytes).toEqual(fromString);
+  });
+
+  it('reviver deletes an object key on undefined (byte ≡ string, object branch unchanged)', () => {
+    const drop = (k: string, v: any) => (k === 'a' ? undefined : v);
+    const fromBytes = parse(enc('{a:1,b:2}'), drop) as Record<string, unknown>;
+    const fromString = parse('{a:1,b:2}', drop) as Record<string, unknown>;
+
+    expect('a' in fromBytes).toBe(false);
+    expect(Object.keys(fromBytes)).toEqual(['b']);
+    expect(fromBytes).toEqual(fromString);
+  });
+
+  it('reviver deletes a nested array element (array in object in array; byte ≡ string)', () => {
+    const drop = (k: string, v: any) => (v === 99 ? undefined : v);
+    const fromBytes = parse(enc('[{a:[1,99,3]}]'), drop) as any[];
+    const fromString = parse('[{a:[1,99,3]}]', drop) as any[];
+    const inner = fromBytes[0].a as any[];
+
+    expect(inner.length).toBe(3);
+    expect(1 in inner).toBe(false);
+    expect(fromBytes).toEqual(fromString);
+  });
+
   it('accepts a Node Buffer (Uint8Array subclass)', () => {
     expect(parse(Buffer.from('{a:1}', 'utf8'))).toEqual({ a: 1 });
   });

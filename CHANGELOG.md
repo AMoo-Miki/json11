@@ -69,4 +69,14 @@ The first independent JSON11 release (forked from JSON5 v2.2.3).
   also provided so `import JSON11 from 'json11'` and `import * as JSON11 from
   'json11'` bind the full API too.
 
+### Fixed
+
+- **Reviver now deletes array elements on `undefined`, matching `JSON.parse`
+  (behavior change).** When a reviver returns `undefined` for an array element,
+  that element is now deleted, leaving a genuine hole (`length` unchanged,
+  `1 in arr === false`, skipped by `Object.keys`/`forEach`/`map`) — the same
+  `[[Delete]]` `JSON.parse` performs. Previously the array branch left a visited
+  `undefined` instead. The object branch already deleted correctly; both parsers
+  (string and byte) now behave identically.
+
 [3.0.0-alpha.1]: https://github.com/AMoo-Miki/JSON11/releases/tag/v3.0.0-alpha.1

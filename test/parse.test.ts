@@ -204,6 +204,32 @@ describe('parse(text, reviver)', () => {
     expect(parse('[0,1,2]', (k, v) => (k === '1') ? undefined : v))
       .toEqual([0, undefined, 2]);
   });
+  it('deletes array elements as holes on undefined, matching JSON.parse', () => {
+    const drop = (k: string, v: any) => (v === 20 ? undefined : v);
+    const result = parse('[10,20,30]', drop) as any[];
+    const expected = JSON.parse('[10,20,30]', drop) as any[];
+
+    expect(result.length).toBe(3);
+    expect(1 in result).toBe(false);
+    expect(Object.keys(result)).not.toContain('1');
+    expect(Object.keys(result)).toEqual(Object.keys(expected));
+    expect(1 in result).toBe(1 in expected);
+
+    const visited: any[] = [];
+    result.forEach((v) => visited.push(v));
+    expect(visited).toEqual([10, 30]);
+  });
+  it('deletes a nested array element (array in object in array)', () => {
+    const drop = (k: string, v: any) => (v === 99 ? undefined : v);
+    const result = parse('[{a:[1,99,3]}]', drop) as any[];
+    const expected = JSON.parse('[{"a":[1,99,3]}]', drop) as any[];
+    const inner = result[0].a as any[];
+
+    expect(inner.length).toBe(3);
+    expect(1 in inner).toBe(false);
+    expect(Object.keys(inner)).toEqual(Object.keys(expected[0].a));
+    expect(result).toEqual(expected);
+  });
   it('modifies the root value', () => {
     expect(parse('1', (k, v) => (k === '') ? 'revived' : v))
       .toBe('revived');

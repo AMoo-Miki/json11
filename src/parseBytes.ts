@@ -709,12 +709,16 @@ export function parseBytes<T = any>(
         for (let i = 0; i < value.length; i++) {
           const key = String(i);
           const replacement = internalize(value, key, reviver, depth + 1);
-          Object.defineProperty(value, key, {
-            value: replacement,
-            writable: true,
-            enumerable: true,
-            configurable: true,
-          });
+          if (replacement === undefined) {
+            delete value[i];
+          } else {
+            Object.defineProperty(value, key, {
+              value: replacement,
+              writable: true,
+              enumerable: true,
+              configurable: true,
+            });
+          }
         }
       } else {
         for (const key in value) {
