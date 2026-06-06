@@ -85,6 +85,45 @@ describe('stringify(value, { raw: true }) — RawValue / RawString injection', (
     }
   });
 
+  it('RawValue.raw output equals the same content serialized as a normal string', () => {
+    /* The one-engine lock: a raw node must serialize byte-for-byte the way the
+     * same bytes written as a normal string value would (quote choice + escape
+     * set). The corpus is valid Unicode-scalar content (randString never emits a
+     * lone surrogate), so enc(s)/s round-trip cleanly and there is no NUL/control
+     * case where raw-vs-normal legitimately differ. U+2028/U+2029 are in
+     * SCALAR_CODE_POINTS, so the table-derived multibyte escape path is exercised. */
+    const rng = makeRng(0x0B11E);
+    const optionSets: any[] = [
+      {}, { quote: '"' }, { quote: "'" }, { withLegacyEscapes: true }, { quoteNames: true },
+    ];
+    for (let i = 0; i < 2000; i++) {
+      const s = randString(rng, 30);
+      const opts = optionSets[i % optionSets.length];
+      const rawOut = dec(bytes({ x: RawValue.raw(enc(s)) }, { ...opts, raw: true }));
+      const normOut = dec(bytes({ x: s }, { ...opts, raw: true }));
+      expect(rawOut).toBe(normOut);
+    }
+  });
+
+  it("picks the quote by content like a normal string (O'Brien -> double quotes)", () => {
+    const out = dec(bytes({ x: RawValue.raw(enc("O'Brien")) }, { raw: true }));
+    expect(out).toBe(dec(bytes({ x: "O'Brien" }, { raw: true })));
+    expect(out).toBe('{x:"O\'Brien"}');
+  });
+
+  it("a raw node's quotes shift a later sibling string's quote choice (shared balance)", () => {
+    /* The raw node carries three " and no ', bumping the shared double-quote
+     * weight; the sibling "it's" (which alone would pick " as its delimiter)
+     * therefore flips to ' and escapes its apostrophe — exactly as a normal
+     * string with the raw node's content would have made it. */
+    const withRaw = dec(bytes({ a: RawValue.raw(enc('"""')), b: "it's" }, { raw: true }));
+    const withStr = dec(bytes({ a: '"""', b: "it's" }, { raw: true }));
+    expect(withRaw).toBe(withStr);
+    expect(withRaw).toBe('{a:\'"""\',b:\'it\\\'s\'}');
+    // Without the preceding raw/string node, "it's" alone picks double quotes.
+    expect(dec(bytes({ b: "it's" }, { raw: true }))).toBe('{b:"it\'s"}');
+  });
+
   it('raw injection works nested in arrays and objects with spacing', () => {
     const secret = RawValue.raw(enc("top'secret\nwith \"both\" quotes"));
     const out = bytes({ a: [1, { b: secret }], c: secret }, { raw: true, space: 2 });

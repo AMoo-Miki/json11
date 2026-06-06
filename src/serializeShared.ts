@@ -51,11 +51,19 @@ export function quoteString(value: string, ctx: QuoteContext): string {
     product += c;
   }
 
-  const quoteChar = ctx.quote || Object.keys(ctx.quoteWeights).reduce((a, b) => (ctx.quoteWeights[a] < ctx.quoteWeights[b]) ? a : b);
+  const quoteChar = chooseQuote(ctx);
 
   product = product.replace(new RegExp(quoteChar, 'g'), ctx.quoteReplacements[quoteChar]);
 
   return quoteChar + product + quoteChar;
+}
+
+/* The quote character to wrap a leaf in: a caller-forced quote if any, else the
+ * cheaper of `'`/`"` by accumulated document-wide weight (ties resolve to the
+ * first `quoteWeights` key). Single source of truth so the byte serializer's raw
+ * escaper and `quoteString` pick the quote identically. */
+export function chooseQuote(ctx: QuoteContext): string {
+  return ctx.quote || Object.keys(ctx.quoteWeights).reduce((a, b) => (ctx.quoteWeights[a] < ctx.quoteWeights[b]) ? a : b);
 }
 
 export function serializeKey(key: string, ctx: QuoteContext): string {

@@ -14,7 +14,7 @@
 
 import { ByteWriter, decodeUtf8 } from './bytes';
 import { controlEscape } from './escapes';
-import { QuoteContext, quoteString, serializeKey } from './serializeShared';
+import { QuoteContext, quoteString, serializeKey, chooseQuote } from './serializeShared';
 import { RawString, RawValue, QUOTE_DOUBLE, QUOTE_SINGLE } from './raw';
 
 export type SerializeConfig = {
@@ -58,7 +58,6 @@ export function serializeToBytes(value: any, config: SerializeConfig): Uint8Arra
   const stack: any[] = [];
   let indent = '';
 
-  const rawQuoteByte = quoteContext.quote === '"' ? QUOTE_DOUBLE : QUOTE_SINGLE;
   const escapeTable = buildEscapeTable(quoteContext);
 
   const nameSerializer = (key: string): Uint8Array =>
@@ -139,26 +138,33 @@ export function serializeToBytes(value: any, config: SerializeConfig): Uint8Arra
   }
 
   function escapeRaw(bytes: Uint8Array): Uint8Array {
+    /* Mirror quoteString's two-pass shape over the raw bytes: first bump the
+     * shared quote weights for every literal '/" byte (exactly as quoteString
+     * does per char) so this node both picks its own quote from — and
+     * contributes to — the document-wide balance, then escape whichever quote
+     * that balance selects. Byte-only: the weight keys are the static strings
+     * "'"/'"', never value-derived bytes. */
+    for (let i = 0; i < bytes.length; i++) {
+      if (bytes[i] === QUOTE_SINGLE) quoteContext.quoteWeights["'"]++;
+      else if (bytes[i] === QUOTE_DOUBLE) quoteContext.quoteWeights['"']++;
+    }
+    const quoteByte = chooseQuote(quoteContext) === '"' ? QUOTE_DOUBLE : QUOTE_SINGLE;
+
     const writer = new ByteWriter(bytes.length + 2);
-    writer.pushByte(rawQuoteByte);
-    escapeRawInto(writer, bytes);
-    writer.pushByte(rawQuoteByte);
+    writer.pushByte(quoteByte);
+    escapeRawInto(writer, bytes, quoteByte);
+    writer.pushByte(quoteByte);
     return writer.toUint8Array();
   }
 
-  function escapeRawInto(writer: ByteWriter, bytes: Uint8Array): void {
-    const otherQuote = rawQuoteByte === QUOTE_DOUBLE ? QUOTE_SINGLE : QUOTE_DOUBLE;
+  function escapeRawInto(writer: ByteWriter, bytes: Uint8Array, quoteByte: number): void {
+    const otherQuote = quoteByte === QUOTE_DOUBLE ? QUOTE_SINGLE : QUOTE_DOUBLE;
     const len = bytes.length;
     let i = 0;
     while (i < len) {
       const b = bytes[i];
 
       if (b >= 0x80) {
-        if (b === 0xe2 && i + 2 < len && bytes[i + 1] === 0x80 && (bytes[i + 2] === 0xa8 || bytes[i + 2] === 0xa9)) {
-          writer.pushBytes(bytes[i + 2] === 0xa8 ? escapeTable.lineSep : escapeTable.paraSep);
-          i += 3;
-          continue;
-        }
         let dec;
         try {
           dec = decodeUtf8(bytes, i);
@@ -166,12 +172,17 @@ export function serializeToBytes(value: any, config: SerializeConfig): Uint8Arra
           throw new TypeError(`JSON11: RawValue.raw contains malformed UTF-8 (${(ex as Error).message})`);
         }
         if (!dec) break;
-        writer.pushBytes(bytes, i, i + dec.size);
+        const escape = escapeTable.multiByte.get(dec.cp);
+        if (escape) {
+          writer.pushBytes(escape);
+        } else {
+          writer.pushBytes(bytes, i, i + dec.size);
+        }
         i += dec.size;
         continue;
       }
 
-      if (b === rawQuoteByte) {
+      if (b === quoteByte) {
         writer.pushByte(0x5c);
         writer.pushByte(b);
         i++;
@@ -283,28 +294,35 @@ export function serializeToBytes(value: any, config: SerializeConfig): Uint8Arra
 type EscapeTable = {
   byByte: (Uint8Array | undefined)[];
   nulDigit: Uint8Array;
-  lineSep: Uint8Array;
-  paraSep: Uint8Array;
+  multiByte: Map<number, Uint8Array>;
 };
 
-/* Build a byte-indexed escape table from the same shared escape mappings the
- * string serializer uses, so RawValue.raw escaping is consistent with the rest
- * of JSON11's output. */
+/* Build the escape table from the same shared escape mappings the string
+ * serializer uses, so RawValue.raw escaping is consistent with the rest of
+ * JSON11's output: a byte-indexed array for the ASCII (< 0x80) escapes and a
+ * code-point-keyed map for the non-ASCII ones. Deriving the multibyte set from
+ * the table (rather than hardcoding U+2028/U+2029) keeps the raw path in
+ * lockstep with the string path by construction — a new non-ASCII entry in the
+ * shared table is picked up here automatically. */
 function buildEscapeTable(ctx: QuoteContext): EscapeTable {
   const byByte: (Uint8Array | undefined)[] = new Array(0x80);
   for (let b = 0; b < 0x20; b++) {
     byByte[b] = enc(controlEscape(b, ctx.withLegacyEscapes));
   }
+  const multiByte = new Map<number, Uint8Array>();
   for (const key of Object.keys(ctx.quoteReplacements)) {
     const cp = key.codePointAt(0)!;
-    if (cp < 0x80 && cp !== QUOTE_DOUBLE && cp !== QUOTE_SINGLE) {
-      byByte[cp] = enc(ctx.quoteReplacements[key]);
+    if (cp < 0x80) {
+      if (cp !== QUOTE_DOUBLE && cp !== QUOTE_SINGLE) {
+        byByte[cp] = enc(ctx.quoteReplacements[key]);
+      }
+    } else {
+      multiByte.set(cp, enc(ctx.quoteReplacements[key]));
     }
   }
   return {
     byByte,
     nulDigit: enc(ctx.nulFollowedByDigit),
-    lineSep: enc(ctx.quoteReplacements['\u2028']),
-    paraSep: enc(ctx.quoteReplacements['\u2029']),
+    multiByte,
   };
 }
