@@ -51,6 +51,23 @@ export class ByteWriter {
     this.len += count;
   }
 
+  /* Insert `src` immediately before offset `at`, shifting the existing bytes
+   * [at, len) to the right. The byte serializer uses this for an object member
+   * whose key needs quoting: that key's quote choice depends on the quote
+   * weights its *value* contributes, so the value must be serialized first
+   * (appended here) yet appear after the key — the key is spliced in front once
+   * known. Numeric only: it moves bytes, never constructs a String. */
+  insertBefore(at: number, src: Uint8Array): void {
+    const count = src.length;
+    if (count <= 0) {
+      return;
+    }
+    this.ensure(count);
+    this.buf.copyWithin(at + count, at, this.len);
+    this.buf.set(src, at);
+    this.len += count;
+  }
+
   /* Encode a single Unicode scalar value as UTF-8. Surrogate code points
    * (0xD800-0xDFFF) are emitted as U+FFFD because they have no valid UTF-8
    * encoding; surrogate *pairs* must be combined by the caller before reaching

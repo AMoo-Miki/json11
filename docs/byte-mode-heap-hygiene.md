@@ -128,15 +128,21 @@ structural characters (`{ } [ ] : , "` whitespace, number/literal chars) and for
 ### Re-inject (move the secret out, bytes → bytes, no `String` of the value)
 
 1. `stringify(value, { raw:true })` → `serializeToBytes` (`src/stringify.ts` →
-   `src/stringifyBytes.ts:55`).
+   `src/stringifyBytes.ts:56`), which assembles the whole document in one pass
+   into a single shared `ByteWriter` (`writeValue` dispatches on the resolved
+   node).
 2. A `RawString` value → `spliceEscaped(value.span(), value.quote)`
-   (`src/stringifyBytes.ts:85-87`). `RawValue.escaped` →
-   `spliceEscaped(bytes, quote)` (`:90-91`). `RawValue.raw` → `escapeRaw`
-   (`:93`).
-3. `spliceEscaped` (`src/stringifyBytes.ts:132-138`) copies bytes between two
-   quote bytes. `escapeRaw`/`escapeRawInto` (`:140-201`) are byte operations over
-   a **precomputed byte escape table** (`buildEscapeTable`, `:286-303`); the
-   secret bytes are never turned into a `String`.
+   (`src/stringifyBytes.ts:118-120`). `RawValue.escaped` →
+   `spliceEscaped(bytes, quote)` (`:124-125`). `RawValue.raw` → `escapeRaw`
+   (`:127`).
+3. `spliceEscaped` (`src/stringifyBytes.ts:176-180`) writes the quote byte, the
+   value bytes, and the closing quote byte straight into the shared writer (no
+   intermediate buffer, no `String`). `escapeRaw`/`escapeRawInto` (`:182-249`)
+   are byte operations over a **precomputed byte escape table**
+   (`buildEscapeTable`, `:394-...`) that likewise write into that shared writer;
+   the secret bytes are never turned into a `String`. The shared writer is a
+   numeric `Uint8Array` accumulator (`src/bytes.ts`) — `pushByte`/`pushBytes`/
+   `insertBefore` move bytes only and construct no `String`.
 
 ## Why Y holds
 

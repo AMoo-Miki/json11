@@ -31,41 +31,52 @@ export type SerializeConfig = {
 const textEncoder = new TextEncoder();
 const enc = (s: string): Uint8Array => textEncoder.encode(s);
 
-function concat(parts: Uint8Array[]): Uint8Array {
-  let total = 0;
-  for (const p of parts) total += p.length;
-  const out = new Uint8Array(total);
-  let off = 0;
-  for (const p of parts) {
-    out.set(p, off);
-    off += p.length;
-  }
-  return out;
-}
+/* ASCII byte literals for the structural tokens and the three keyword constants.
+ * Writing these straight into the shared buffer avoids a TextEncoder call per
+ * occurrence (the dominant constant-factor cost of the old per-fragment encode).
+ */
+const BYTE_LBRACE = 0x7b; /* { */
+const BYTE_RBRACE = 0x7d; /* } */
+const BYTE_LBRACKET = 0x5b; /* [ */
+const BYTE_RBRACKET = 0x5d; /* ] */
+const BYTE_COLON = 0x3a; /* : */
+const BYTE_COMMA = 0x2c; /* , */
+const BYTE_SPACE = 0x20; /*   */
+const BYTE_NEWLINE = 0x0a; /* \n */
+const NULL_BYTES = enc('null');
+const TRUE_BYTES = enc('true');
+const FALSE_BYTES = enc('false');
 
-function joinBytes(parts: Uint8Array[], sep: Uint8Array): Uint8Array {
-  if (parts.length === 0) return new Uint8Array(0);
-  const pieces: Uint8Array[] = [];
-  for (let i = 0; i < parts.length; i++) {
-    if (i > 0) pieces.push(sep);
-    pieces.push(parts[i]);
-  }
-  return concat(pieces);
-}
+/* A sentinel for a member that produces no output (a function/symbol/undefined
+ * value after the toJSON ladder + replacer). The resolve step returns it so the
+ * caller can decide — *before writing anything* — whether to emit a member
+ * (object: skip entirely; array: write null). */
+const SKIP = Symbol('skip');
 
 export function serializeToBytes(value: any, config: SerializeConfig): Uint8Array | undefined {
   const { gap, trailingComma, quoteContext, quoteNames, replacer, propertyList, withBigInt, maxDepth } = config;
   const stack: any[] = [];
-  let indent = '';
+  const gapBytes = enc(gap);
+  const pretty = gap !== '';
 
   const escapeTable = buildEscapeTable(quoteContext);
+  const writer = new ByteWriter();
 
   const nameSerializer = (key: string): Uint8Array =>
     enc(quoteNames ? quoteString(key, quoteContext) : serializeKey(key, quoteContext));
 
-  return serializeProperty('', { '': value });
+  const root = resolveValue('', { '': value });
+  if (root === SKIP) {
+    return undefined;
+  }
+  writeValue(root);
+  return writer.toUint8Array();
 
-  function serializeProperty(key: string, holder: any): Uint8Array | undefined {
+  /* Run the toJSON11 > toJSON5 > toJSON ladder, the replacer, and the boxed-
+   * primitive unwrap exactly once (they may have side effects), yielding either
+   * the final value to serialize or SKIP. Splitting resolve from write lets the
+   * object writer learn a member is skippable before it has written the key. */
+  function resolveValue(key: string, holder: any): any {
     let value = holder[key];
 
     if (value != null && !(value instanceof RawValue) && !(value instanceof RawString)) {
@@ -82,15 +93,8 @@ export function serializeToBytes(value: any, config: SerializeConfig): Uint8Arra
       value = replacer.call(holder, key, value);
     }
 
-    if (value instanceof RawString) {
-      return spliceEscaped(value.span(), value.quote);
-    }
-
-    if (value instanceof RawValue) {
-      if (value.preEscaped) {
-        return spliceEscaped(value.bytes, value.quote as number);
-      }
-      return escapeRaw(value.bytes);
+    if (value instanceof RawString || value instanceof RawValue) {
+      return value;
     }
 
     if (value instanceof Number) {
@@ -101,43 +105,81 @@ export function serializeToBytes(value: any, config: SerializeConfig): Uint8Arra
       value = value.valueOf();
     }
 
+    const type = typeof value;
+    if (type === 'function' || type === 'symbol' || type === 'undefined') {
+      return SKIP;
+    }
+    return value;
+  }
+
+  /* Write the bytes of an already-resolved (never SKIP) value into the shared
+   * writer. */
+  function writeValue(value: any): void {
+    if (value instanceof RawString) {
+      spliceEscaped(value.span(), value.quote);
+      return;
+    }
+
+    if (value instanceof RawValue) {
+      if (value.preEscaped) {
+        spliceEscaped(value.bytes, value.quote as number);
+      } else {
+        escapeRaw(value.bytes);
+      }
+      return;
+    }
+
     switch (value) {
       case null:
-        return enc('null');
+        writer.pushBytes(NULL_BYTES);
+        return;
       case true:
-        return enc('true');
+        writer.pushBytes(TRUE_BYTES);
+        return;
       case false:
-        return enc('false');
+        writer.pushBytes(FALSE_BYTES);
+        return;
     }
 
     if (typeof value === 'string') {
-      return enc(quoteString(value, quoteContext));
+      writer.pushBytes(enc(quoteString(value, quoteContext)));
+      return;
     }
 
     if (typeof value === 'number') {
-      return enc(String(value));
+      writer.pushBytes(enc(String(value)));
+      return;
     }
 
     if (typeof value === 'bigint') {
-      return enc(value.toString() + (withBigInt === false ? '' : 'n'));
+      writer.pushBytes(enc(value.toString() + (withBigInt === false ? '' : 'n')));
+      return;
     }
 
-    if (typeof value === 'object') {
-      return Array.isArray(value) ? serializeArray(value) : serializeObject(value);
+    if (Array.isArray(value)) {
+      writeArray(value);
+    } else {
+      writeObject(value);
     }
-
-    return undefined;
   }
 
-  function spliceEscaped(inner: Uint8Array, quoteByte: number): Uint8Array {
-    const out = new Uint8Array(inner.length + 2);
-    out[0] = quoteByte;
-    out.set(inner, 1);
-    out[out.length - 1] = quoteByte;
-    return out;
+  /* Write 0x0a followed by `depth` copies of the gap bytes — the byte form of
+   * the string serializer's '\n' + indent, where indent is the gap repeated per
+   * open container. */
+  function writeIndent(depth: number): void {
+    writer.pushByte(BYTE_NEWLINE);
+    for (let i = 0; i < depth; i++) {
+      writer.pushBytes(gapBytes);
+    }
   }
 
-  function escapeRaw(bytes: Uint8Array): Uint8Array {
+  function spliceEscaped(inner: Uint8Array, quoteByte: number): void {
+    writer.pushByte(quoteByte);
+    writer.pushBytes(inner);
+    writer.pushByte(quoteByte);
+  }
+
+  function escapeRaw(bytes: Uint8Array): void {
     /* Mirror quoteString's two-pass shape over the raw bytes: first bump the
      * shared quote weights for every literal '/" byte (exactly as quoteString
      * does per char) so this node both picks its own quote from — and
@@ -150,11 +192,9 @@ export function serializeToBytes(value: any, config: SerializeConfig): Uint8Arra
     }
     const quoteByte = chooseQuote(quoteContext) === '"' ? QUOTE_DOUBLE : QUOTE_SINGLE;
 
-    const writer = new ByteWriter(bytes.length + 2);
     writer.pushByte(quoteByte);
     escapeRawInto(writer, bytes, quoteByte);
     writer.pushByte(quoteByte);
-    return writer.toUint8Array();
   }
 
   function escapeRawInto(writer: ByteWriter, bytes: Uint8Array, quoteByte: number): void {
@@ -212,7 +252,49 @@ export function serializeToBytes(value: any, config: SerializeConfig): Uint8Arra
     }
   }
 
-  function serializeObject(value: any): Uint8Array {
+  /* Emit one resolved (never SKIP) object member as `key:value` (or `key: value`
+   * when pretty). The string serializer serializes the value before the key
+   * (serializeProperty then nameSerializer), so the key's quote choice depends
+   * on the quote weights the value subtree contributes. To stay byte-identical
+   * we must preserve that order: a bare-identifier key bumps no weights, so it
+   * is written first and the value appended (single pass). A key that routes
+   * through quoteString has its weight bumps rolled back, the value is
+   * serialized first, then the key is re-serialized in the correct order and
+   * spliced in front of the value bytes. */
+  function writeMember(key: string, resolved: any): void {
+    const savedSingle = quoteContext.quoteWeights["'"];
+    const savedDouble = quoteContext.quoteWeights['"'];
+    const keyBytes = nameSerializer(key);
+    const keyQuoted = keyBytes.length > 0 && (keyBytes[0] === QUOTE_SINGLE || keyBytes[0] === QUOTE_DOUBLE);
+
+    if (!keyQuoted) {
+      writer.pushBytes(keyBytes);
+      writer.pushByte(BYTE_COLON);
+      if (pretty) {
+        writer.pushByte(BYTE_SPACE);
+      }
+      writeValue(resolved);
+      return;
+    }
+
+    quoteContext.quoteWeights["'"] = savedSingle;
+    quoteContext.quoteWeights['"'] = savedDouble;
+
+    const mark = writer.length;
+    writeValue(resolved);
+
+    const orderedKey = nameSerializer(key);
+    const sepLength = pretty ? 2 : 1;
+    const prefix = new Uint8Array(orderedKey.length + sepLength);
+    prefix.set(orderedKey, 0);
+    prefix[orderedKey.length] = BYTE_COLON;
+    if (pretty) {
+      prefix[orderedKey.length + 1] = BYTE_SPACE;
+    }
+    writer.insertBefore(mark, prefix);
+  }
+
+  function writeObject(value: any): void {
     if (stack.includes(value)) {
       throw TypeError('Converting circular structure to JSON11');
     }
@@ -222,72 +304,77 @@ export function serializeToBytes(value: any, config: SerializeConfig): Uint8Arra
 
     stack.push(value);
 
-    const stepback = indent;
-    indent = indent + gap;
-
+    /* The member indent is the gap repeated per open container (stack.length,
+     * counting this object); the closing brace steps back one level. */
+    const depth = stack.length;
     const keys = propertyList || Object.keys(value);
-    const partial: Uint8Array[] = [];
+
+    writer.pushByte(BYTE_LBRACE);
+    let emitted = 0;
     for (const key of keys) {
-      const propertyBytes = serializeProperty(key, value);
-      if (propertyBytes !== undefined) {
-        const head = enc(gap !== '' ? ':' + ' ' : ':');
-        partial.push(concat([nameSerializer(key), head, propertyBytes]));
+      const resolved = resolveValue(key, value);
+      if (resolved === SKIP) {
+        continue;
+      }
+      if (emitted > 0) {
+        writer.pushByte(BYTE_COMMA);
+      }
+      if (pretty) {
+        writeIndent(depth);
+      }
+      writeMember(key, resolved);
+      emitted++;
+    }
+
+    if (emitted > 0 && pretty) {
+      if (trailingComma) {
+        writer.pushByte(BYTE_COMMA);
+      }
+      writeIndent(depth - 1);
+    }
+    writer.pushByte(BYTE_RBRACE);
+
+    stack.pop();
+  }
+
+  function writeArray(value: any[]): void {
+    if (stack.includes(value)) {
+      throw TypeError('Converting circular structure to JSON11');
+    }
+    if (stack.length >= maxDepth) {
+      throw TypeError(`JSON11: maximum nesting depth ${maxDepth} exceeded`);
+    }
+
+    stack.push(value);
+
+    const depth = stack.length;
+    const len = value.length;
+
+    writer.pushByte(BYTE_LBRACKET);
+    for (let i = 0; i < len; i++) {
+      if (i > 0) {
+        writer.pushByte(BYTE_COMMA);
+      }
+      if (pretty) {
+        writeIndent(depth);
+      }
+      const resolved = resolveValue(String(i), value);
+      if (resolved === SKIP) {
+        writer.pushBytes(NULL_BYTES);
+      } else {
+        writeValue(resolved);
       }
     }
 
-    let final: Uint8Array;
-    if (partial.length === 0) {
-      final = enc('{}');
-    } else if (gap === '') {
-      final = concat([enc('{'), joinBytes(partial, enc(',')), enc('}')]);
-    } else {
-      final = concat([
-        enc('{\n' + indent),
-        joinBytes(partial, enc(',\n' + indent)),
-        enc(trailingComma + '\n' + stepback + '}'),
-      ]);
+    if (len > 0 && pretty) {
+      if (trailingComma) {
+        writer.pushByte(BYTE_COMMA);
+      }
+      writeIndent(depth - 1);
     }
+    writer.pushByte(BYTE_RBRACKET);
 
     stack.pop();
-    indent = stepback;
-    return final;
-  }
-
-  function serializeArray(value: any[]): Uint8Array {
-    if (stack.includes(value)) {
-      throw TypeError('Converting circular structure to JSON11');
-    }
-    if (stack.length >= maxDepth) {
-      throw TypeError(`JSON11: maximum nesting depth ${maxDepth} exceeded`);
-    }
-
-    stack.push(value);
-
-    const stepback = indent;
-    indent = indent + gap;
-
-    const partial: Uint8Array[] = [];
-    for (let i = 0; i < value.length; i++) {
-      const propertyBytes = serializeProperty(String(i), value);
-      partial.push(propertyBytes !== undefined ? propertyBytes : enc('null'));
-    }
-
-    let final: Uint8Array;
-    if (partial.length === 0) {
-      final = enc('[]');
-    } else if (gap === '') {
-      final = concat([enc('['), joinBytes(partial, enc(',')), enc(']')]);
-    } else {
-      final = concat([
-        enc('[\n' + indent),
-        joinBytes(partial, enc(',\n' + indent)),
-        enc(trailingComma + '\n' + stepback + ']'),
-      ]);
-    }
-
-    stack.pop();
-    indent = stepback;
-    return final;
   }
 }
 
