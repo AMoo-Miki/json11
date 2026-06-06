@@ -1,5 +1,6 @@
 import { expect, describe, it } from 'vitest';
 import { parse, stringify, RawString, RawValue, unsafeEncodeAsJSON } from '../src';
+import { QUOTE_SINGLE } from '../src/raw';
 import { dec, enc, makeRng, randString } from './_helpers';
 
 describe('RawString', () => {
@@ -37,6 +38,29 @@ describe('RawString', () => {
     expect(dec(RawString.decodeBytes(buf, 3, 11))).toBe('aAb');
   });
 
+  it('decodeBytes throws on a span the default quote does not fully consume', () => {
+    // A single-quoted value's span legitimately holds an unescaped `"`; decoding
+    // it with the default `"` terminator used to silently truncate to `a`.
+    expect(() => RawString.decodeBytes(enc('a"b'), 0, 3)).toThrow(TypeError);
+  });
+
+  it('decodeBytes decodes a `"`-bearing span when given the matching quote', () => {
+    expect(dec(RawString.decodeBytes(enc('a"b'), 0, 3, QUOTE_SINGLE))).toBe('a"b');
+  });
+
+  it('decodeBytes rejects out-of-range start/end with a TypeError', () => {
+    const buf = enc('a\\u0041b');
+    expect(() => RawString.decodeBytes(buf, 0, buf.length + 1)).toThrow(TypeError);
+    expect(() => RawString.decodeBytes(buf, 3, 1)).toThrow(TypeError);
+  });
+
+  it('instance decode() of a single-quoted value is unaffected (forwards its quote)', () => {
+    const doc: any = parse(enc(`{"k":'a"b'}`), null, { raw: 'values' });
+    expect(doc.k).toBeInstanceOf(RawString);
+    expect(doc.k.quote).toBe(QUOTE_SINGLE);
+    expect(dec(doc.k.decode())).toBe('a"b');
+  });
+
   it('decode never constructs a String (returns Uint8Array)', () => {
     const doc: any = parse(enc('{"s":"secret"}'), null, { raw: 'values' });
     expect(doc.s.decode()).toBeInstanceOf(Uint8Array);
@@ -52,6 +76,35 @@ describe('RawValue', () => {
   });
   it('raw carries unescaped bytes', () => {
     const rv = RawValue.raw(enc('a\nb'));
+    expect(rv.preEscaped).toBe(false);
+  });
+
+  it('escaped throws when inner carries an unescaped closing quote (structure injection)', () => {
+    expect(() => RawValue.escaped(enc('a","injected":"b'), 0x22)).toThrow(TypeError);
+  });
+
+  it('escaped throws on a quote/span mismatch (a `"`-bearing span passed as 0x22)', () => {
+    // The bytes are a valid single-quoted span (unescaped `"` is legal there);
+    // re-framing them with `"` would break out of the string.
+    expect(() => RawValue.escaped(enc('a"b'), 0x22)).toThrow(TypeError);
+    // …but the same span is splice-able with its own quote.
+    expect(RawValue.escaped(enc('a"b'), QUOTE_SINGLE).preEscaped).toBe(true);
+  });
+
+  it('escaped still accepts a legitimate same-quote span lifted from a document', () => {
+    const docBytes = stringify({ subkey: 'he said "hi"\tand left' }, { raw: true })!;
+    const parsed: any = parse(docBytes, null, { raw: 'values' });
+    const span = parsed.subkey.span();
+    const quote = parsed.subkey.quote;
+    // Validation must not reject a real span; the splice round-trips byte-identically.
+    const out = stringify({ moved: RawValue.escaped(span, quote) }, { raw: true })!;
+    const re: any = parse(out, null, { raw: 'values' });
+    expect(dec(re.moved.decode())).toBe('he said "hi"\tand left');
+    expect(dec(out).includes(dec(span))).toBe(true);
+  });
+
+  it('raw is untouched by the escaped validation', () => {
+    const rv = RawValue.raw(enc('a","injected":"b'));
     expect(rv.preEscaped).toBe(false);
   });
 });

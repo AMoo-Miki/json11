@@ -377,8 +377,34 @@ export class RawString {
    * folded in as a static so spans obtained elsewhere can be decoded too. Never
    * constructs a String. */
   static decodeBytes(buf: Uint8Array, start: number, end: number, quote: QuoteByte = QUOTE_DOUBLE): Uint8Array {
+    /* The offsets are caller-supplied; reject an out-of-range window up front so
+     * a bad call fails with a clear contract error rather than a confusing
+     * malformed-UTF-8 throw (from reading `undefined` past the array) or a
+     * silently empty result (when start > end). */
+    if (
+      !Number.isInteger(start) ||
+      !Number.isInteger(end) ||
+      start < 0 ||
+      start > end ||
+      end > buf.length
+    ) {
+      throw new TypeError(
+        `JSON11: RawString.decodeBytes: start/end out of range for buffer length ${buf.length}`,
+      );
+    }
     const sink = new ByteSink(buf);
-    walkString(buf, start, quote, sink, end, false);
+    /* Default quote is `"`; a single-quoted span legitimately contains an
+     * unescaped `"`, so decoding it with the wrong terminator stops early. A
+     * correctly-quoted, correctly-bounded span always walks to `end` (the framing
+     * quote cannot appear unescaped inside a valid value), so a short walk means
+     * the quote or the range is wrong — throw instead of returning a truncated
+     * value. */
+    const stop = walkString(buf, start, quote, sink, end, false);
+    if (stop < end) {
+      throw new TypeError(
+        `JSON11: RawString.decodeBytes: span not fully consumed (stopped at offset ${stop} before end ${end}) — wrong quote for this span, or a bad range`,
+      );
+    }
     return sink.result();
   }
 }
@@ -414,6 +440,21 @@ export class RawValue {
   static escaped(inner: Uint8Array, quote: QuoteByte): RawValue {
     if (quote !== QUOTE_DOUBLE && quote !== QUOTE_SINGLE) {
       throw new TypeError('JSON11: RawValue.escaped quote must be 0x22 (") or 0x27 (\')');
+    }
+    /* Validate inner at the boundary so a frame-breaking RawValue never exists.
+     * `spliceEscaped` wraps inner verbatim between two `quote` bytes without
+     * inspecting it; an unescaped `quote` inside inner would terminate the value
+     * early and turn the trailing bytes into document structure. Scan with the
+     * shared engine and a numeric sink (no String) — if the walk does not consume
+     * the whole buffer before an unescaped `quote`, the span is unsplice-able for
+     * this delimiter. `walkString` itself throws on a raw newline / bad escape /
+     * lone `\` / malformed UTF-8, which is the desired fail-closed behavior. */
+    const stop = walkString(inner, 0, quote, NULL_SINK, inner.length, false);
+    if (stop !== inner.length) {
+      const quoteChar = quote === QUOTE_DOUBLE ? '"' : "'";
+      throw new TypeError(
+        `JSON11: RawValue.escaped: inner contains an unescaped ${quoteChar} at offset ${stop} that would break string framing`,
+      );
     }
     return new RawValue(inner, true, quote);
   }
