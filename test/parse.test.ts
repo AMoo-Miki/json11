@@ -372,7 +372,7 @@ describe('parse errors', () => {
 
   for (let i = 1; i <= 9; i++) {
     it(`throws on escaped digit ${i}`, () => {
-      expect(() => parse(`'\\${i}'`)).toThrowErrorMatchingInlineSnapshot(`[SyntaxError: JSON11: invalid character '${i}' at 1:3]`);
+      expect(() => parse(`'\\${i}'`)).toThrow(`JSON11: invalid character '${i}' at 1:3`);
     });
   }
 

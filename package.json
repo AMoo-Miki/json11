@@ -52,15 +52,16 @@
     "url": "https://github.com/AMoo-Miki/json11/issues"
   },
   "devDependencies": {
-    "@eslint/js": "^9.3.0",
-    "@rollup/plugin-terser": "^0.4.4",
-    "@vitest/coverage-istanbul": "^1.6.0",
+    "@eslint/js": "^10.0.1",
+    "@rollup/plugin-terser": "^1.0.0",
+    "@types/node": "^24.13.1",
+    "@vitest/coverage-istanbul": "^4.1.8",
     "dts-bundle-generator": "^9.5.1",
-    "eslint": "^9.3.0",
-    "globals": "^15.3.0",
+    "eslint": "^10.4.1",
+    "globals": "^17.6.0",
     "regenerate": "^1.4.0",
     "unicode-10.0.0": "^0.7.5",
-    "vite": "^5.2.11",
-    "vitest": "^1.6.0"
+    "vite": "^8.0.16",
+    "vitest": "^4.1.8"
   }
 }
