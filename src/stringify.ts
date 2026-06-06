@@ -2,6 +2,7 @@ import { buildQuoteReplacements, nulFollowedByDigitReplacement } from './escapes
 import { quoteString, serializeKey, QuoteContext } from './serializeShared';
 import { RawString, RawValue } from './raw';
 import { serializeToBytes } from './stringifyBytes';
+import * as util from './util';
 
 export type AllowList = (string | number)[];
 export type Replacer = (this: any, key: string, value: any) => any;
@@ -30,6 +31,11 @@ export type Stringify11Options = StringifyQuoteOptions & {
    * can reach the output buffer without ever becoming a JS String.
    */
   raw?: boolean,
+  /* Maximum nesting depth the serializer will descend before throwing. Both the
+   * string and byte serializers recurse once per nesting level, so a
+   * deeply-nested value can overflow the JS call stack; this bounds it.
+   * Defaults to util.MAX_DEPTH_DEFAULT. */
+  maxDepth?: number,
 };
 export type StringifyOptions = Stringify11Options & {
   replacer?: Replacer | AllowList | null,
@@ -91,6 +97,7 @@ export function stringify(
   let quoteNames: boolean = false;
   let trailingComma: string = '';
   let raw: boolean = false;
+  let maxDepth: number = util.MAX_DEPTH_DEFAULT;
 
   const quoteWeights: Record<string, number> = {
     '\'': 0.1,
@@ -117,6 +124,7 @@ export function stringify(
     withBigInt = replacerOrAllowListOrOptions.withBigInt;
     withLegacyEscapes = replacerOrAllowListOrOptions.withLegacyEscapes === true;
     raw = replacerOrAllowListOrOptions.raw === true;
+    maxDepth = replacerOrAllowListOrOptions.maxDepth ?? util.MAX_DEPTH_DEFAULT;
   } else {
     if (
       // replacerOrAllowListOrOptions is Replacer
@@ -147,6 +155,7 @@ export function stringify(
       trailingComma = ',';
     }
     raw = options?.raw === true;
+    maxDepth = options?.maxDepth ?? util.MAX_DEPTH_DEFAULT;
   }
 
   const quoteReplacements = buildQuoteReplacements(withLegacyEscapes);
@@ -172,6 +181,7 @@ export function stringify(
       replacer,
       propertyList,
       withBigInt,
+      maxDepth,
     });
   }
 
@@ -251,6 +261,9 @@ export function stringify(
     if (stack.includes(value)) {
       throw TypeError('Converting circular structure to JSON11');
     }
+    if (stack.length >= maxDepth) {
+      throw TypeError(`JSON11: maximum nesting depth ${maxDepth} exceeded`);
+    }
 
     stack.push(value);
 
@@ -293,6 +306,9 @@ export function stringify(
   function serializeArray(value: any[]): string {
     if (stack.includes(value)) {
       throw TypeError('Converting circular structure to JSON11');
+    }
+    if (stack.length >= maxDepth) {
+      throw TypeError(`JSON11: maximum nesting depth ${maxDepth} exceeded`);
     }
 
     stack.push(value);

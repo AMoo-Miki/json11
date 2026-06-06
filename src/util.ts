@@ -7,6 +7,15 @@ import unicode from './unicode';
  * differential invariant). Callers may override via the maxNumericDigits option. */
 export const MAX_NUMERIC_DIGITS_DEFAULT = 10000;
 
+/* Default nesting-depth cap for the recursive reviver walk and both serializers.
+ * Tree construction in the parsers is iterative and unaffected, but the reviver's
+ * `internalize` and the serializers recurse once per nesting level, so a
+ * deeply-nested document/value can overflow the JS call stack. The cap converts
+ * that engine-level RangeError into a controlled, typed limit. Shared by every
+ * recursive site so the byte and string paths reject at the same depth (the
+ * differential invariant). Callers may override via the maxDepth option. */
+export const MAX_DEPTH_DEFAULT = 1000;
+
 export const isSpaceSeparator = (c?: string): boolean => {
   return typeof c === 'string' && unicode.Space_Separator.test(c);
 };

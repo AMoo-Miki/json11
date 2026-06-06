@@ -24,6 +24,10 @@ export type Parse11Options = {
    * `…n` form and the withLongNumerals promotion). Defaults to
    * util.MAX_NUMERIC_DIGITS_DEFAULT; bounds the super-linear BigInt(...) cost. */
   maxNumericDigits?: number,
+  /* Maximum nesting depth the reviver walk will descend before throwing. Only
+   * the reviver path recurses (tree construction is iterative), so this bounds
+   * the reviver's stack use. Defaults to util.MAX_DEPTH_DEFAULT. */
+  maxDepth?: number,
 }
 
 export function parse<T = any>(
@@ -67,6 +71,7 @@ export function parse<T = any>(
   let c: string | undefined;
 
   const maxNumericDigits = options?.maxNumericDigits ?? util.MAX_NUMERIC_DIGITS_DEFAULT;
+  const maxDepth = options?.maxDepth ?? util.MAX_DEPTH_DEFAULT;
 
   const lexStates: { [key: string]: () => any } = {
     default() {
@@ -757,18 +762,21 @@ export function parse<T = any>(
   } while (token.type !== 'eof');
 
   if (typeof reviver === 'function') {
-    return internalize({ '': root }, '', reviver);
+    return internalize({ '': root }, '', reviver, 0);
   }
 
   return root;
 
-  function internalize(holder: any, name: string, reviver: (key: string, value: any) => any): any {
+  function internalize(holder: any, name: string, reviver: (key: string, value: any) => any, depth: number): any {
+    if (depth > maxDepth) {
+      throw syntaxError(`JSON11: maximum nesting depth ${maxDepth} exceeded`);
+    }
     const value = holder[name];
     if (value != null && typeof value === 'object') {
       if (Array.isArray(value)) {
         for (let i = 0; i < value.length; i++) {
           const key = String(i);
-          const replacement = internalize(value, key, reviver);
+          const replacement = internalize(value, key, reviver, depth + 1);
           Object.defineProperty(value, key, {
             value: replacement,
             writable: true,
@@ -778,7 +786,7 @@ export function parse<T = any>(
         }
       } else {
         for (const key in value) {
-          const replacement = internalize(value, key, reviver);
+          const replacement = internalize(value, key, reviver, depth + 1);
           if (replacement === undefined) {
             delete value[key];
           } else {

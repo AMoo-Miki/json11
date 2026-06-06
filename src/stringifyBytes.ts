@@ -25,6 +25,7 @@ export type SerializeConfig = {
   replacer?: (this: any, key: string, value: any) => any,
   propertyList?: string[],
   withBigInt?: boolean,
+  maxDepth: number,
 };
 
 const textEncoder = new TextEncoder();
@@ -53,7 +54,7 @@ function joinBytes(parts: Uint8Array[], sep: Uint8Array): Uint8Array {
 }
 
 export function serializeToBytes(value: any, config: SerializeConfig): Uint8Array | undefined {
-  const { gap, trailingComma, quoteContext, quoteNames, replacer, propertyList, withBigInt } = config;
+  const { gap, trailingComma, quoteContext, quoteNames, replacer, propertyList, withBigInt, maxDepth } = config;
   const stack: any[] = [];
   let indent = '';
 
@@ -204,6 +205,9 @@ export function serializeToBytes(value: any, config: SerializeConfig): Uint8Arra
     if (stack.includes(value)) {
       throw TypeError('Converting circular structure to JSON11');
     }
+    if (stack.length >= maxDepth) {
+      throw TypeError(`JSON11: maximum nesting depth ${maxDepth} exceeded`);
+    }
 
     stack.push(value);
 
@@ -241,6 +245,9 @@ export function serializeToBytes(value: any, config: SerializeConfig): Uint8Arra
   function serializeArray(value: any[]): Uint8Array {
     if (stack.includes(value)) {
       throw TypeError('Converting circular structure to JSON11');
+    }
+    if (stack.length >= maxDepth) {
+      throw TypeError(`JSON11: maximum nesting depth ${maxDepth} exceeded`);
     }
 
     stack.push(value);

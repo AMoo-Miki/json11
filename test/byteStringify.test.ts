@@ -108,3 +108,26 @@ describe('stringify(value, { raw: true }) — RawValue / RawString injection', (
     expect(() => stringify({ x: rs })).toThrow(TypeError);
   });
 });
+
+describe('serializer nesting-depth cap (string ≡ bytes)', () => {
+  /* `n` nested arrays around a leaf 0; entering the innermost array happens with
+   * `n - 1` open ancestors, so the cap rejects when n > maxDepth. */
+  const nestedValue = (n: number): any => {
+    let v: any = 0;
+    for (let i = 0; i < n; i++) v = [v];
+    return v;
+  };
+
+  it('rejects past the cap on both serializers with a typed TypeError', () => {
+    const v = nestedValue(60);
+    expect(() => stringify(v, { maxDepth: 50 })).toThrow(TypeError);
+    expect(() => stringify(v, { raw: true, maxDepth: 50 })).toThrow(TypeError);
+  });
+
+  it('accepts exactly at the cap and the byte output decodes to the string output', () => {
+    const v = nestedValue(50);
+    const str = stringify(v, { maxDepth: 50 });
+    const raw = bytes(v, { raw: true, maxDepth: 50 });
+    expect(dec(raw)).toBe(str);
+  });
+});

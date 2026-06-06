@@ -266,6 +266,34 @@ describe('parse(Uint8Array) — negative / adversarial', () => {
   });
 });
 
+describe('reviver nesting-depth cap (byte ≡ string)', () => {
+  /* `n` nested arrays around a leaf 0; the deepest internalize call is on the
+   * leaf at depth `n`, so the cap rejects when n > maxDepth. */
+  const nestedText = (n: number): string => '['.repeat(n) + '0' + ']'.repeat(n);
+  const identity = (_k: string, v: any): any => v;
+  const opts = { maxDepth: 50 } as const;
+
+  it('rejects past the cap on both parsers with a typed SyntaxError', () => {
+    const text = nestedText(60);
+    expect(() => parse(text, identity, opts)).toThrow(SyntaxError);
+    expect(() => parse(enc(text), identity, opts)).toThrow(SyntaxError);
+  });
+
+  it('accepts exactly at the cap on both parsers and agrees', () => {
+    const text = nestedText(50);
+    const fromString = parse(text, identity, opts);
+    const fromBytes = parse(enc(text), identity, opts);
+    expect(fromBytes).toEqual(fromString);
+  });
+
+  it('without a reviver, parses past the cap (iterative tree-build is unaffected)', () => {
+    const text = nestedText(60);
+    expect(() => parse(text, null, opts)).not.toThrow();
+    expect(() => parse(enc(text), null, opts)).not.toThrow();
+    expect(parse(enc(text), null, opts)).toEqual(parse(text, null, opts));
+  });
+});
+
 /* A stable serialization for differential generation: avoids quote-weight
  * surprises by forcing double quotes, and includes BigInt as <n>. */
 function JSON11stringifyStable(v: any): string {
