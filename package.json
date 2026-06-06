@@ -21,7 +21,6 @@
     "build:cli": "vite build --mode cli",
     "build:mini": "MINIFY=true vite build",
     "build:type": "dts-bundle-generator -o ./dist/index.d.ts ./src/index.ts --no-banner --export-referenced-types --umd-module-name=JSON11",
-    "generate-unicode": "node build/unicode.js",
     "lint": "eslint .",
     "lint-fix": "eslint --fix .",
     "test": "vitest --run",
@@ -59,8 +58,8 @@
     "dts-bundle-generator": "^9.5.1",
     "eslint": "^10.4.1",
     "globals": "^17.6.0",
-    "regenerate": "^1.4.0",
-    "unicode-10.0.0": "^0.7.5",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.60.1",
     "vite": "^8.0.16",
     "vitest": "^4.1.8"
   }

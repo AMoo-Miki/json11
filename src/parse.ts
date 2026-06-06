@@ -793,7 +793,6 @@ export function parse<T = any>(
 
     for (; ;) {
       c = peek();
-      //console.log('c', c, lexState, parseState);
 
       const token = lexStates[lexState]();
       if (token) {
