@@ -46,3 +46,33 @@ describe('extract one value as bytes (the consumer use case)', () => {
   });
   void decoded;
 });
+
+/* Deep nesting separates the two byte-serializer cost classes. Bare-identifier
+ * keys are written before their value, so the whole document streams out in one
+ * pass. A quoted key (forced here by quoteNames) must be spliced in front of its
+ * already-written value to match the string serializer's value-before-key quote
+ * choice, which re-shifts the value subtree at every level — so the cost grows
+ * with depth. The bare-key pair is the O(n) control; the gap to the quoted-key
+ * pair is the amplification this watches for. */
+const deepNest = (() => {
+  let node: any = { leaf: 'a fairly long leaf payload '.repeat(20) };
+  for (let level = 0; level < 200; level++) {
+    node = { label: `level "${level}" boundary`, child: node };
+  }
+  return node;
+})();
+
+describe('stringify deep-nest', () => {
+  bench('stringify(string) bare keys', () => {
+    stringify(deepNest);
+  });
+  bench('stringify(bytes) bare keys', () => {
+    stringify(deepNest, { raw: true });
+  });
+  bench('stringify(string) quoted keys', () => {
+    stringify(deepNest, { quoteNames: true });
+  });
+  bench('stringify(bytes) quoted keys', () => {
+    stringify(deepNest, { raw: true, quoteNames: true });
+  });
+});

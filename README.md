@@ -283,6 +283,13 @@ const out2 = stringify(
 A `RawString` (from a raw-mode parse) can also be placed directly into the value
 tree in byte mode; it is injected by its escaped span.
 
+> **Note on deep nesting.** Objects with bare-identifier keys serialize in a
+> single streaming pass. With `quoteNames: true` (or non-identifier keys) the
+> serializer must place each quoted key in front of its already-serialized value
+> to stay byte-identical to the string path, which re-copies the value bytes;
+> for deeply-nested quoted-key objects this extra byte-copying grows with depth
+> (bounded by the `maxDepth` cap).
+
 ### Security posture
 
 - **Hostile-input safe parsing.** The byte parser is bounds-checked and is
