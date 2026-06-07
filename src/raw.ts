@@ -30,8 +30,8 @@ const CR = 0x0d;
  * after each class body rather than as an in-class computed member. */
 const NODE_INSPECT = Symbol.for('nodejs.util.inspect.custom');
 
-// ignoreBOM: true is essential — without it TextDecoder strips a leading U+FEFF
-// from every decoded run, dropping BOMs that the string parser preserves.
+/* ignoreBOM: true — without it TextDecoder strips a leading U+FEFF from every
+ * decoded run, dropping BOMs that the string parser preserves. */
 const textDecoder = new TextDecoder('utf-8', { ignoreBOM: true });
 
 export type QuoteByte = 0x22 | 0x27;
@@ -316,18 +316,18 @@ export class RawString {
     Object.defineProperty(this, 'quote', { value: quote, enumerable: false, writable: false });
   }
 
-  /* (2a) Zero-copy view of the escaped inner bytes between the quotes. Aliases
-   * the input buffer — do not mutate, and copy before the input is zeroed. */
+  /* Zero-copy view of the escaped inner bytes between the quotes. Aliases the
+   * input buffer — do not mutate, and copy before the input is zeroed. */
   span(): Uint8Array {
     return this.source.subarray(this.start, this.end);
   }
 
-  /* (2a) A fresh copy of the escaped inner bytes (safe to retain). */
+  /* A fresh copy of the escaped inner bytes (safe to retain). */
   copy(): Uint8Array {
     return this.source.slice(this.start, this.end);
   }
 
-  /* (2b) The decoded (unescaped) value as fresh UTF-8 bytes. Never constructs a
+  /* The decoded (unescaped) value as fresh UTF-8 bytes. Never constructs a
    * JS String. Lone surrogate escapes are emitted as U+FFFD. */
   decode(): Uint8Array {
     return RawString.decodeBytes(this.source, this.start, this.end, this.quote);
@@ -439,7 +439,7 @@ export class RawValue {
   }
 
   /* Splice already-escaped inner bytes verbatim, wrapped in `quote`. Use this to
-   * move an escaped span lifted from a JSON11 document (bar #4: byte-identical). */
+   * move an escaped span lifted from a JSON11 document (byte-identical). */
   static escaped(inner: Uint8Array, quote: QuoteByte): RawValue {
     if (quote !== QUOTE_DOUBLE && quote !== QUOTE_SINGLE) {
       throw new TypeError('JSON11: RawValue.escaped quote must be 0x22 (") or 0x27 (\')');

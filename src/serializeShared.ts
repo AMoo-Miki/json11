@@ -3,9 +3,9 @@
  *
  * Both serializers produce string/key fragments through these exact functions so
  * the byte output is byte-identical to the UTF-8 encoding of the string output.
- * Note `quoteWeights` is intentionally shared, accumulating per stringify call:
- * the chosen quote character depends on the quote balance across the whole
- * document, so both serializers must thread the same context to stay identical.
+ * `quoteWeights` is intentionally shared, accumulating per stringify call: the
+ * chosen quote character depends on the quote balance across the whole document,
+ * so both serializers must thread the same context to stay identical.
  */
 
 import * as util from './util';

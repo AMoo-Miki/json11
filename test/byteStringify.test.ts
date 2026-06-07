@@ -160,7 +160,7 @@ describe('stringify(value, { raw: true }) — circular structure throws (byte �
 });
 
 describe('stringify(value, { raw: true }) — RawValue / RawString injection', () => {
-  it('splices a pre-escaped span verbatim, byte-identical (bar #4)', () => {
+  it('splices a pre-escaped span verbatim, byte-identical', () => {
     const src = enc('{"subkey":"S\\u0041 \\"q\\" \\\\ \\n end \\uD83D\\uDE00","meta":"ok"}');
     const doc: any = parse(src, null, { raw: 'values' });
     const out = bytes({ moved: RawValue.escaped(doc.subkey.span(), doc.subkey.quote) }, { raw: true });

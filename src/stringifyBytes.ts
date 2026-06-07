@@ -4,7 +4,7 @@
  * serializer's structure/formatting exactly — leaf strings and keys go through
  * the same shared `quoteString`/`serializeKey` helpers, so for any value without
  * raw nodes the byte output is byte-identical to the UTF-8 encoding of the string
- * output (bar #4). Where it differs: it recognizes `RawValue`/`RawString` nodes
+ * output. Where it differs: it recognizes `RawValue`/`RawString` nodes
  * and injects their bytes directly (pre-escaped spliced verbatim, or raw bytes
  * escaped with JSON11's own escaper), so a secret reaches the buffer without ever
  * becoming a JS String.
