@@ -3,7 +3,7 @@
  * path (it is separate code and must not regress the string paths).
  */
 import { bench, describe } from 'vitest';
-import { parse, stringify, RawValue } from '../src';
+import { parse, stringify, RawValue, RawString } from '../src';
 
 const sample = {
   id: 1186694007922679455n,
@@ -40,7 +40,7 @@ describe('stringify', () => {
 });
 
 describe('extract one value as bytes (the consumer use case)', () => {
-  const doc: any = parse(bytes, null, { raw: 'values' });
+  const doc = parse(bytes, null, { raw: 'values' }) as Record<string, RawString>;
   bench('lift span + reinject (no String for the value)', () => {
     stringify({ moved: RawValue.escaped(doc.name.span(), doc.name.quote) }, { raw: true });
   });
@@ -55,7 +55,7 @@ describe('extract one value as bytes (the consumer use case)', () => {
  * with depth. The bare-key pair is the O(n) control; the gap to the quoted-key
  * pair is the amplification this watches for. */
 const deepNest = (() => {
-  let node: any = { leaf: 'a fairly long leaf payload '.repeat(20) };
+  let node: Record<string, unknown> = { leaf: 'a fairly long leaf payload '.repeat(20) };
   for (let level = 0; level < 200; level++) {
     node = { label: `level "${level}" boundary`, child: node };
   }

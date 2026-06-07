@@ -28,7 +28,7 @@ export const pick = <T>(rng: () => number, arr: T[]): T => arr[randInt(rng, arr.
 
 /* Recursively convert a raw-mode parse tree into a plain value (RawString ->
  * decoded JS string) so it can be deep-compared against the string parser. */
-export function materialize(value: any): any {
+export function materialize(value: unknown): unknown {
   if (value instanceof RawString) {
     return value.unsafeDecodeToString();
   }
@@ -36,9 +36,10 @@ export function materialize(value: any): any {
     return value.map(materialize);
   }
   if (value != null && typeof value === 'object') {
-    const out: any = {};
-    for (const k of Object.keys(value)) {
-      out[k] = materialize(value[k]);
+    const out: Record<string, unknown> = {};
+    const source = value as Record<string, unknown>;
+    for (const k of Object.keys(source)) {
+      out[k] = materialize(source[k]);
     }
     return out;
   }
@@ -108,9 +109,20 @@ function randNumber(rng: () => number): number {
   }
 }
 
+/* A value the generators can produce: the JSON11-serializable leaves plus nested
+ * arrays/objects of the same. */
+export type GeneratedValue =
+  | null
+  | boolean
+  | number
+  | bigint
+  | string
+  | GeneratedValue[]
+  | { [key: string]: GeneratedValue };
+
 /* A random JSON11-serializable value (objects, arrays, strings, numbers,
  * bigints, booleans, null), bounded in depth. */
-export function randValue(rng: () => number, depth = 0): any {
+export function randValue(rng: () => number, depth = 0): GeneratedValue {
   if (depth > 4) {
     return randString(rng);
   }
@@ -123,13 +135,13 @@ export function randValue(rng: () => number, depth = 0): any {
     case 5:
     case 6: {
       const n = randInt(rng, 5);
-      const arr: any[] = [];
+      const arr: GeneratedValue[] = [];
       for (let i = 0; i < n; i++) arr.push(randValue(rng, depth + 1));
       return arr;
     }
     default: {
       const n = randInt(rng, 5);
-      const obj: any = {};
+      const obj: { [key: string]: GeneratedValue } = {};
       for (let i = 0; i < n; i++) {
         obj[randString(rng, 8) || `k${i}`] = randValue(rng, depth + 1);
       }

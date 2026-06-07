@@ -16,13 +16,25 @@ import { ByteWriter, decodeUtf8 } from './bytes';
 import { controlEscape } from './escapes';
 import { type QuoteContext, quoteString, serializeKey, chooseQuote } from './serializeShared';
 import { RawString, RawValue, QUOTE_DOUBLE, QUOTE_SINGLE } from './raw';
+import type { Replacer } from './stringify';
+
+/* A value that holds the property being serialized: the synthetic root, a parsed
+ * object, or an array indexed by stringified position. */
+type Holder = { [key: string]: unknown };
+
+/* The self-serialization hooks a value may define, honored toJSON11 > toJSON5 > toJSON. */
+interface ToJsonHooks {
+  toJSON11?: (key: string) => unknown;
+  toJSON5?: (key: string) => unknown;
+  toJSON?: (key: string) => unknown;
+}
 
 export type SerializeConfig = {
   gap: string,
   trailingComma: string,
   quoteContext: QuoteContext,
   quoteNames: boolean,
-  replacer?: (this: any, key: string, value: any) => any,
+  replacer?: Replacer,
   propertyList?: string[],
   withBigInt?: boolean,
   nonFinite: 'literal' | 'null' | 'throw',
@@ -54,11 +66,11 @@ const FALSE_BYTES = enc('false');
  * (object: skip entirely; array: write null). */
 const SKIP = Symbol('skip');
 
-export function serializeToBytes(value: any, config: SerializeConfig): Uint8Array | undefined {
+export function serializeToBytes(value: unknown, config: SerializeConfig): Uint8Array | undefined {
   const { gap, trailingComma, quoteContext, quoteNames, replacer, propertyList, withBigInt, nonFinite, maxDepth } = config;
   /* Open-ancestor set for O(1) cycle detection; doubles as the live nesting
    * depth via stack.size. Set.has matches Array.includes object identity. */
-  const stack = new Set<any>();
+  const stack = new Set<object>();
   const gapBytes = enc(gap);
   const pretty = gap !== '';
 
@@ -79,16 +91,17 @@ export function serializeToBytes(value: any, config: SerializeConfig): Uint8Arra
    * primitive unwrap exactly once (they may have side effects), yielding either
    * the final value to serialize or SKIP. Splitting resolve from write lets the
    * object writer learn a member is skippable before it has written the key. */
-  function resolveValue(key: string, holder: any): any {
-    let value = holder[key];
+  function resolveValue(key: string, holder: Holder): unknown {
+    let value: unknown = holder[key];
 
     if (value != null && !(value instanceof RawValue) && !(value instanceof RawString)) {
-      if (typeof value.toJSON11 === 'function') {
-        value = value.toJSON11(key);
-      } else if (typeof value.toJSON5 === 'function') {
-        value = value.toJSON5(key);
-      } else if (typeof value.toJSON === 'function') {
-        value = value.toJSON(key);
+      const hooks = value as ToJsonHooks;
+      if (typeof hooks.toJSON11 === 'function') {
+        value = hooks.toJSON11(key);
+      } else if (typeof hooks.toJSON5 === 'function') {
+        value = hooks.toJSON5(key);
+      } else if (typeof hooks.toJSON === 'function') {
+        value = hooks.toJSON(key);
       }
     }
 
@@ -117,7 +130,7 @@ export function serializeToBytes(value: any, config: SerializeConfig): Uint8Arra
 
   /* Write the bytes of an already-resolved (never SKIP) value into the shared
    * writer. */
-  function writeValue(value: any): void {
+  function writeValue(value: unknown): void {
     if (value instanceof RawString) {
       spliceEscaped(value.span(), value.quote);
       return;
@@ -169,7 +182,7 @@ export function serializeToBytes(value: any, config: SerializeConfig): Uint8Arra
     if (Array.isArray(value)) {
       writeArray(value);
     } else {
-      writeObject(value);
+      writeObject(value as object);
     }
   }
 
@@ -220,7 +233,7 @@ export function serializeToBytes(value: any, config: SerializeConfig): Uint8Arra
           dec = decodeUtf8(bytes, i);
         } catch (ex) {
           const msg = ex instanceof Error ? ex.message : String(ex);
-          throw new TypeError(`JSON11: RawValue.raw contains malformed UTF-8 (${msg})`);
+          throw new TypeError(`JSON11: RawValue.raw contains malformed UTF-8 (${msg})`, { cause: ex });
         }
         if (!dec) break;
         const escape = escapeTable.multiByte.get(dec.cp);
@@ -272,7 +285,7 @@ export function serializeToBytes(value: any, config: SerializeConfig): Uint8Arra
    * through quoteString has its weight bumps rolled back, the value is
    * serialized first, then the key is re-serialized in the correct order and
    * spliced in front of the value bytes. */
-  function writeMember(key: string, resolved: any): void {
+  function writeMember(key: string, resolved: unknown): void {
     const savedSingle = quoteContext.quoteWeights["'"];
     const savedDouble = quoteContext.quoteWeights['"'];
     const keyBytes = nameSerializer(key);
@@ -305,7 +318,7 @@ export function serializeToBytes(value: any, config: SerializeConfig): Uint8Arra
     writer.insertBefore(mark, prefix);
   }
 
-  function writeObject(value: any): void {
+  function writeObject(value: object): void {
     if (stack.has(value)) {
       throw TypeError('Converting circular structure to JSON11');
     }
@@ -323,7 +336,7 @@ export function serializeToBytes(value: any, config: SerializeConfig): Uint8Arra
     writer.pushByte(BYTE_LBRACE);
     let emitted = 0;
     for (const key of keys) {
-      const resolved = resolveValue(key, value);
+      const resolved = resolveValue(key, value as Holder);
       if (resolved === SKIP) {
         continue;
       }
@@ -348,7 +361,7 @@ export function serializeToBytes(value: any, config: SerializeConfig): Uint8Arra
     stack.delete(value);
   }
 
-  function writeArray(value: any[]): void {
+  function writeArray(value: unknown[]): void {
     if (stack.has(value)) {
       throw TypeError('Converting circular structure to JSON11');
     }
@@ -369,7 +382,7 @@ export function serializeToBytes(value: any, config: SerializeConfig): Uint8Arra
       if (pretty) {
         writeIndent(depth);
       }
-      const resolved = resolveValue(String(i), value);
+      const resolved = resolveValue(String(i), value as unknown as Holder);
       if (resolved === SKIP) {
         writer.pushBytes(NULL_BYTES);
       } else {

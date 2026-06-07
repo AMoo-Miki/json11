@@ -10,10 +10,35 @@
  */
 
 import * as util from './util';
+import type { Reviver } from './parse';
 import { decodeUtf8 } from './bytes';
 import { byteError, type QuoteByte, RawString, scanStringForParse } from './raw';
 
 export type RawMode = 'off' | 'values' | 'all';
+
+/* A primitive token payload plus the borrowed `RawString` a value token carries
+ * in raw mode (keys are always decoded to JS strings). */
+type TokenValue = string | number | bigint | boolean | null | RawString;
+
+type TokenType =
+  | 'eof'
+  | 'punctuator'
+  | 'null'
+  | 'boolean'
+  | 'numeric'
+  | 'bigint'
+  | 'string'
+  | 'identifier';
+
+interface Token {
+  type: TokenType;
+  value?: TokenValue;
+  line: number;
+  column: number;
+}
+
+/* The container frames the parser builds and the reviver walks. */
+type Container = { [key: string]: unknown } | unknown[];
 
 export type ParseBytesOptions = {
   withLongNumerals?: boolean;
@@ -28,9 +53,9 @@ export type ParseBytesOptions = {
   maxDepth?: number;
 };
 
-export function parseBytes<T = any>(
+export function parseBytes<T = unknown>(
   source: Uint8Array,
-  reviver?: ((this: any, key: string, value: any) => any) | null,
+  reviver?: Reviver | null,
   options?: ParseBytesOptions,
 ): T {
   const rawValues = options?.raw === 'values' || options?.raw === 'all';
@@ -38,19 +63,19 @@ export function parseBytes<T = any>(
   const maxDepth = options?.maxDepth ?? util.MAX_DEPTH_DEFAULT;
 
   let parseState: string = 'start';
-  let stack: any[] = [];
+  const stack: Container[] = [];
   let pos: number = 0;
   let line: number = 1;
   let column: number = 0;
-  let token: any;
-  let key: any;
-  let root: any;
+  let token: Token;
+  let key: string;
+  let root: unknown;
   let lexState: string;
   let buffer: string | undefined;
   let sign: number;
   let c: string | undefined;
 
-  const lexStates: { [key: string]: () => any } = {
+  const lexStates: { [state: string]: () => Token | undefined } = {
     default() {
       switch (c) {
         case '\t':
@@ -610,7 +635,7 @@ export function parseBytes<T = any>(
       switch (token.type) {
         case 'identifier':
         case 'string':
-          key = token.value;
+          key = token.value as string;
           parseState = 'afterPropertyName';
           return;
 
@@ -694,16 +719,16 @@ export function parseBytes<T = any>(
   } while (token.type !== 'eof');
 
   if (typeof reviver === 'function') {
-    return internalize({ '': root }, '', reviver, 0);
+    return internalize({ '': root }, '', reviver, 0) as T;
   }
 
-  return root;
+  return root as T;
 
-  function internalize(holder: any, name: string, reviver: (key: string, value: any) => any, depth: number): any {
+  function internalize(holder: Container, name: string, reviver: Reviver, depth: number): unknown {
     if (depth > maxDepth) {
       throw byteError(`maximum nesting depth ${maxDepth} exceeded`, pos);
     }
-    const value = holder[name];
+    const value = (holder as { [key: string]: unknown })[name];
     if (value != null && typeof value === 'object' && !(value instanceof RawString)) {
       if (Array.isArray(value)) {
         for (let i = 0; i < value.length; i++) {
@@ -721,12 +746,13 @@ export function parseBytes<T = any>(
           }
         }
       } else {
-        for (const key in value) {
-          const replacement = internalize(value, key, reviver, depth + 1);
+        const object = value as { [key: string]: unknown };
+        for (const key in object) {
+          const replacement = internalize(object, key, reviver, depth + 1);
           if (replacement === undefined) {
-            delete value[key];
+            delete object[key];
           } else {
-            Object.defineProperty(value, key, {
+            Object.defineProperty(object, key, {
               value: replacement,
               writable: true,
               enumerable: true,
@@ -740,7 +766,7 @@ export function parseBytes<T = any>(
     return reviver.call(holder, name, value);
   }
 
-  function lex(): any {
+  function lex(): Token {
     lexState = 'default';
     buffer = '';
     sign = 1;
@@ -803,7 +829,7 @@ export function parseBytes<T = any>(
   /* Consume an opening quote (already the current char), then scan the whole
    * string value/key via the shared escape engine. Advances `pos` past the
    * closing quote and returns the token. */
-  function scanStringToken(quoteByte: QuoteByte, collect: boolean): any {
+  function scanStringToken(quoteByte: QuoteByte, collect: boolean): Token {
     read(); // consume opening quote
     const startInner = pos;
     const res = scanStringForParse(source, pos, quoteByte, collect, separatorWarn);
@@ -816,7 +842,7 @@ export function parseBytes<T = any>(
     return newToken('string', new RawString(source, startInner, res.innerEnd, quoteByte));
   }
 
-  function newToken(type: string, value?: any): any {
+  function newToken(type: TokenType, value?: TokenValue): Token {
     return {
       type,
       value,
@@ -825,7 +851,7 @@ export function parseBytes<T = any>(
     };
   }
 
-  function newNumericToken(sign: number, buffer?: string): any {
+  function newNumericToken(sign: number, buffer?: string): Token {
     const num = sign * Number(buffer);
 
     if (options?.withLongNumerals) {
@@ -877,7 +903,7 @@ export function parseBytes<T = any>(
   }
 
   function push() {
-    let value;
+    let value: unknown;
 
     switch (token.type) {
       case 'punctuator':
@@ -919,7 +945,7 @@ export function parseBytes<T = any>(
     }
 
     if (value !== null && typeof value === 'object' && !(value instanceof RawString)) {
-      stack.push(value);
+      stack.push(value as Container);
 
       if (Array.isArray(value)) {
         parseState = 'beforeArrayValue';

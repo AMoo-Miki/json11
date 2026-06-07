@@ -5,7 +5,12 @@ import { serializeToBytes } from './stringifyBytes';
 import * as util from './util';
 
 export type AllowList = (string | number)[];
-export type Replacer = (this: any, key: string, value: any) => any;
+export type Replacer = (this: unknown, key: string, value: unknown) => unknown;
+/* `space` accepts boxed `String`/`Number` objects (e.g. `new Number(2)`) as well
+ * as primitives, matching JSON5; getGap unwraps them at runtime. The wrapper
+ * object types are deliberate here, not the mistake the lint rule guards against. */
+// eslint-disable-next-line @typescript-eslint/no-wrapper-object-types
+export type Space = string | number | String | Number | null;
 export type StringifyQuoteOptions = {
   quote?: string,
   quoteNames?: boolean,
@@ -76,57 +81,69 @@ export type Stringify11Options = {
 );
 export type StringifyOptions = Stringify11Options & {
   replacer?: Replacer | AllowList | null,
-  space?: string | number | String | Number | null,
+  space?: Space,
 };
 
+/* The hooks a value may define to customize its own serialization, honored in
+ * the order toJSON11 > toJSON5 > toJSON. */
+interface ToJsonHooks {
+  toJSON11?: (key: string) => unknown;
+  toJSON5?: (key: string) => unknown;
+  toJSON?: (key: string) => unknown;
+}
+
+/* A value that holds the property being serialized: the synthetic `{ '': value }`
+ * root, a parsed object, or an array indexed by stringified position. */
+type Holder = { [key: string]: unknown };
+
 export function stringify(
-  value: any,
+  value: unknown,
   options: StringifyOptions & { raw: true },
 ): Uint8Array | undefined;
 
 export function stringify(
-  value: any,
+  value: unknown,
   options?: StringifyOptions,
 ): string | undefined;
 
 export function stringify(
-  value: any,
+  value: unknown,
   replacer: Replacer | null | undefined,
-  space: string | number | String | Number | null | undefined,
+  space: Space | undefined,
   options: Stringify11Options & { raw: true },
 ): Uint8Array | undefined;
 
 export function stringify(
-  value: any,
+  value: unknown,
   replacer?: Replacer | null,
-  space?: string | number | String | Number | null,
+  space?: Space,
   options?: Stringify11Options,
 ): string | undefined;
 
 export function stringify(
-  value: any,
+  value: unknown,
   allowList: AllowList,
-  space: string | number | String | Number | null | undefined,
+  space: Space | undefined,
   options: Stringify11Options & { raw: true },
 ): Uint8Array | undefined;
 
 export function stringify(
-  value: any,
+  value: unknown,
   allowList?: AllowList,
-  space?: string | number | String | Number | null,
+  space?: Space,
   options?: Stringify11Options,
 ): string | undefined;
 
 export function stringify(
-  value: any,
+  value: unknown,
   replacerOrAllowListOrOptions?: Replacer | StringifyOptions | AllowList | null,
-  space?: string | number | String | Number | null,
+  space?: Space,
   options?: Stringify11Options,
 ): string | undefined | Uint8Array {
   /* Open-ancestor set for cycle detection: membership is O(1) so a deeply
    * nested value does not pay an O(depth) scan per node. Set.has uses
    * SameValueZero, identical object identity to the prior Array.includes. */
-  const stack = new Set<any>();
+  const stack = new Set<object>();
   let indent = '';
   let propertyList: string[] | undefined;
   let replacer: Replacer | undefined;
@@ -137,8 +154,8 @@ export function stringify(
   let quoteNames: boolean = false;
   let trailingComma: string = '';
   let nonFinite: 'literal' | 'null' | 'throw' = 'literal';
-  let pureJson: boolean = false;
-  let raw: boolean = false;
+  let pureJson: boolean;
+  let raw: boolean;
   let maxDepth: number = util.MAX_DEPTH_DEFAULT;
 
   const quoteWeights: Record<string, number> = {
@@ -246,7 +263,7 @@ export function stringify(
 
   return serializeProperty('', { '': value });
 
-  function getGap(space?: string | number | String | Number | null) {
+  function getGap(space?: Space) {
     if (typeof space === 'number' || space instanceof Number) {
       const num = Number(space);
       if (isFinite(num) && num > 0) {
@@ -259,20 +276,21 @@ export function stringify(
     return '';
   }
 
-  function serializeProperty(key: string, holder: any): string | undefined {
-    let value = holder[key];
+  function serializeProperty(key: string, holder: Holder): string | undefined {
+    let value: unknown = holder[key];
 
     if (value instanceof RawValue || value instanceof RawString) {
       throw new TypeError('JSON11: RawValue/RawString can only be serialized in byte mode; use stringify(value, { raw: true })');
     }
 
     if (value != null) {
-      if (typeof value.toJSON11 === 'function') {
-        value = value.toJSON11(key);
-      } else if (typeof value.toJSON5 === 'function') {
-        value = value.toJSON5(key);
-      } else if (typeof value.toJSON === 'function') {
-        value = value.toJSON(key);
+      const hooks = value as ToJsonHooks;
+      if (typeof hooks.toJSON11 === 'function') {
+        value = hooks.toJSON11(key);
+      } else if (typeof hooks.toJSON5 === 'function') {
+        value = hooks.toJSON5(key);
+      } else if (typeof hooks.toJSON === 'function') {
+        value = hooks.toJSON(key);
       }
     }
 
@@ -315,14 +333,14 @@ export function stringify(
       return value.toString() + (withBigInt === false ? '' : 'n');
     }
 
-    if (typeof value === 'object') {
+    if (typeof value === 'object' && value !== null) {
       return Array.isArray(value) ? serializeArray(value) : serializeObject(value);
     }
 
     return undefined;
   }
 
-  function serializeObject(value: any): string {
+  function serializeObject(value: object): string {
     if (stack.has(value)) {
       throw TypeError('Converting circular structure to JSON11');
     }
@@ -332,13 +350,13 @@ export function stringify(
 
     stack.add(value);
 
-    let stepback = indent;
+    const stepback = indent;
     indent = indent + gap;
 
-    let keys = propertyList || Object.keys(value);
-    let partial: string[] = [];
+    const keys = propertyList || Object.keys(value);
+    const partial: string[] = [];
     for (const key of keys) {
-      const propertyString = serializeProperty(key, value);
+      const propertyString = serializeProperty(key, value as Holder);
       if (propertyString !== undefined) {
         let member = nameSerializer(key) + ':';
         if (gap !== '') {
@@ -368,7 +386,7 @@ export function stringify(
     return final;
   }
 
-  function serializeArray(value: any[]): string {
+  function serializeArray(value: unknown[]): string {
     if (stack.has(value)) {
       throw TypeError('Converting circular structure to JSON11');
     }
@@ -378,12 +396,12 @@ export function stringify(
 
     stack.add(value);
 
-    let stepback = indent;
+    const stepback = indent;
     indent = indent + gap;
 
-    let partial: string[] = [];
+    const partial: string[] = [];
     for (let i = 0; i < value.length; i++) {
-      const propertyString = serializeProperty(String(i), value);
+      const propertyString = serializeProperty(String(i), value as unknown as Holder);
       partial.push((propertyString !== undefined) ? propertyString : 'null');
     }
 
@@ -392,10 +410,10 @@ export function stringify(
       final = '[]';
     } else {
       if (gap === '') {
-        let properties = partial.join(',');
+        const properties = partial.join(',');
         final = '[' + properties + ']';
       } else {
-        let properties = partial.join(',\n' + indent);
+        const properties = partial.join(',\n' + indent);
         final = '[\n' + indent + properties + trailingComma + '\n' + stepback + ']';
       }
     }

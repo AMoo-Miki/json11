@@ -1,5 +1,7 @@
 import { expect, describe, it } from 'vitest';
 import { parse, stringify, RawString, RawValue } from '../src';
+import type { AllowList, Replacer, Space, Stringify11Options, StringifyOptions } from '../src/stringify';
+import type { QuoteByte } from '../src/raw';
 import { dec, enc, makeRng, randString, randValue } from './_helpers';
 
 /* Differential harness that drives the byte serializer through every positional
@@ -7,10 +9,23 @@ import { dec, enc, makeRng, randString, randValue } from './_helpers';
  * four-arg `(value, replacer|allowList, space, options)` shape. Each form is
  * dispatched to the typed `raw: true` overload (no `as any`), so a regression in
  * the `raw: true -> Uint8Array` overload discrimination fails to typecheck here. */
-const bytes = (v: any, ...args: any[]): Uint8Array =>
-  (args.length === 1
-    ? stringify(v, args[0] as { raw: true })
-    : stringify(v, args[0], args[1], args[2] as { raw: true }))!;
+function bytes(v: unknown, options: StringifyOptions & { raw: true }): Uint8Array;
+function bytes(
+  v: unknown,
+  replacer: Replacer | AllowList | null | undefined,
+  space: Space | undefined,
+  options: Stringify11Options & { raw: true },
+): Uint8Array;
+function bytes(v: unknown, ...args: unknown[]): Uint8Array {
+  return (args.length === 1
+    ? stringify(v, args[0] as StringifyOptions & { raw: true })
+    : stringify(
+      v,
+      args[0] as Replacer | AllowList | null | undefined,
+      args[1] as Space | undefined,
+      args[2] as Stringify11Options & { raw: true },
+    ))!;
+}
 
 describe('stringify(value, { raw: true }) — byte output equals utf8(string output)', () => {
   it('matches for primitives and structures', () => {
@@ -31,7 +46,7 @@ describe('stringify(value, { raw: true }) — byte output equals utf8(string out
 
   it('matches across all option permutations on a generated corpus', () => {
     const rng = makeRng(0xBEEF);
-    const optionSets: any[] = [
+    const optionSets: StringifyOptions[] = [
       {},
       { quote: '"' },
       { quote: "'" },
@@ -74,7 +89,7 @@ describe('stringify(value, { raw: true }) — byte output equals utf8(string out
 
   it('matches with positional (replacer, space) and options forms', () => {
     const v = { a: 1, b: 2, c: 3 };
-    const replacer = (k: string, val: any) => (k === 'b' ? undefined : val);
+    const replacer = (k: string, val: unknown) => (k === 'b' ? undefined : val);
     expect(dec(bytes(v, replacer, 2, { raw: true }))).toBe(stringify(v, replacer, 2));
     expect(dec(bytes(v, ['a', 'c'], 0, { raw: true }))).toBe(stringify(v, ['a', 'c']));
   });
@@ -95,19 +110,19 @@ describe('stringify(value, { raw: true }) — toJSON ladder and Date (byte ≡ s
     toJSON() { return { a: 1, b: 2 }; }
   }
   class ToJSONKey {
-    toJSON(key: any) { return key === 'a' ? 1 : 2; }
+    toJSON(key: string) { return key === 'a' ? 1 : 2; }
   }
   class ToJSON5 {
     toJSON5() { return { a: 1, b: 2 }; }
   }
   class ToJSON5Key {
-    toJSON5(key: any) { return key === 'a' ? 1 : 2; }
+    toJSON5(key: string) { return key === 'a' ? 1 : 2; }
   }
   class ToJSON11 {
     toJSON11() { return { a: 1, b: 2 }; }
   }
   class ToJSON11Key {
-    toJSON11(key: any) { return key === 'a' ? 1 : 2; }
+    toJSON11(key: string) { return key === 'a' ? 1 : 2; }
   }
   class Json11OverJson {
     toJSON() { return { a: 1, b: 2 }; }
@@ -122,7 +137,7 @@ describe('stringify(value, { raw: true }) — toJSON ladder and Date (byte ≡ s
     toJSON5() { return { a: 2, b: 2 }; }
   }
 
-  const vals: any[] = [
+  const vals: unknown[] = [
     new Date('2016-01-01T00:00:00.000Z'),
     new ToJSON(),
     { a: new ToJSONKey(), b: new ToJSONKey() },
@@ -147,13 +162,13 @@ describe('stringify(value, { raw: true }) — circular structure throws (byte �
    * would recurse to a RangeError instead of the documented TypeError. A cyclic
    * value can't go through the equality differential, so this is throw-parity. */
   it('throws the documented TypeError on a circular object', () => {
-    const a: any = {};
+    const a: Record<string, unknown> = {};
     a.a = a;
     expect(() => stringify(a, { raw: true })).toThrow('Converting circular structure to JSON11');
   });
 
   it('throws the documented TypeError on a circular array', () => {
-    const a: any = [];
+    const a: unknown[] = [];
     a[0] = a;
     expect(() => stringify(a, { raw: true })).toThrow('Converting circular structure to JSON11');
   });
@@ -162,19 +177,19 @@ describe('stringify(value, { raw: true }) — circular structure throws (byte �
 describe('stringify(value, { raw: true }) — RawValue / RawString injection', () => {
   it('splices a pre-escaped span verbatim, byte-identical', () => {
     const src = enc('{"subkey":"S\\u0041 \\"q\\" \\\\ \\n end \\uD83D\\uDE00","meta":"ok"}');
-    const doc: any = parse(src, null, { raw: 'values' });
+    const doc = parse(src, null, { raw: 'values' }) as Record<string, RawString>;
     const out = bytes({ moved: RawValue.escaped(doc.subkey.span(), doc.subkey.quote) }, { raw: true });
     // The inner escaped bytes appear verbatim in the output
     expect(dec(out).includes(dec(doc.subkey.span()))).toBe(true);
     // And it re-parses to the same decoded value
-    const re: any = parse(out, null, { raw: 'values' });
+    const re = parse(out, null, { raw: 'values' }) as Record<string, RawString>;
     expect(dec(re.moved.decode())).toBe(dec(doc.subkey.decode()));
   });
 
   it('injects a RawString directly (it is a raw node)', () => {
-    const doc: any = parse(enc('{"x":"hi \\u0041"}'), null, { raw: 'values' });
+    const doc = parse(enc('{"x":"hi \\u0041"}'), null, { raw: 'values' }) as Record<string, RawString>;
     const out = bytes({ y: doc.x }, { raw: true });
-    const re: any = parse(out, null, { raw: 'values' });
+    const re = parse(out, null, { raw: 'values' }) as Record<string, RawString>;
     expect(dec(re.y.decode())).toBe('hi A');
   });
 
@@ -183,7 +198,7 @@ describe('stringify(value, { raw: true }) — RawValue / RawString injection', (
     for (let i = 0; i < 1000; i++) {
       const s = randString(rng, 30);
       const out = bytes({ v: RawValue.raw(enc(s)) }, { raw: true });
-      const re: any = parse(out, null, { raw: 'values' });
+      const re = parse(out, null, { raw: 'values' }) as Record<string, RawString>;
       expect(dec(re.v.decode())).toBe(s);
       // and the decoded byte value equals the original bytes
       expect(Array.from(re.v.decode())).toEqual(Array.from(enc(s)));
@@ -198,7 +213,7 @@ describe('stringify(value, { raw: true }) — RawValue / RawString injection', (
      * case where raw-vs-normal legitimately differ. U+2028/U+2029 are in
      * SCALAR_CODE_POINTS, so the table-derived multibyte escape path is exercised. */
     const rng = makeRng(0x0B11E);
-    const optionSets: any[] = [
+    const optionSets: StringifyOptions[] = [
       {}, { quote: '"' }, { quote: "'" }, { withLegacyEscapes: true }, { quoteNames: true },
     ];
     for (let i = 0; i < 2000; i++) {
@@ -232,13 +247,13 @@ describe('stringify(value, { raw: true }) — RawValue / RawString injection', (
   it('raw injection works nested in arrays and objects with spacing', () => {
     const secret = RawValue.raw(enc("top'secret\nwith \"both\" quotes"));
     const out = bytes({ a: [1, { b: secret }], c: secret }, { raw: true, space: 2 });
-    const re: any = parse(out, null, { raw: 'values' });
+    const re = parse(out, null, { raw: 'values' }) as { a: Array<{ b: RawString }>; c: RawString };
     expect(dec(re.a[1].b.decode())).toBe("top'secret\nwith \"both\" quotes");
     expect(dec(re.c.decode())).toBe("top'secret\nwith \"both\" quotes");
   });
 
   it('RawValue.escaped requires a valid quote byte', () => {
-    expect(() => RawValue.escaped(enc('x'), 0x40 as any)).toThrow(TypeError);
+    expect(() => RawValue.escaped(enc('x'), 0x40 as unknown as QuoteByte)).toThrow(TypeError);
   });
 
   it('RawValue.raw rejects malformed UTF-8', () => {
@@ -256,8 +271,8 @@ describe('stringify(value, { raw: true }) — RawValue / RawString injection', (
 describe('serializer nesting-depth cap (string ≡ bytes)', () => {
   /* `n` nested arrays around a leaf 0; entering the innermost array happens with
    * `n - 1` open ancestors, so the cap rejects when n > maxDepth. */
-  const nestedValue = (n: number): any => {
-    let v: any = 0;
+  const nestedValue = (n: number): unknown => {
+    let v: unknown = 0;
     for (let i = 0; i < n; i++) v = [v];
     return v;
   };

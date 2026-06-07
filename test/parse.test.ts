@@ -76,7 +76,7 @@ describe('parse(text)', () => {
       expect(parse('0x1')).toEqual(0x1);
     });
     it('parses bare long hexadecimal number', () => {
-      expect(parse('-0x0123456789abcdefABCDEF')).toEqual(-0x0123456789abcdefABCDEF);
+      expect(parse('-0x0123456789abcdefABCDEF')).toEqual(-Number('0x0123456789abcdefABCDEF'));
     });
     it('parses leading zeroes', () => {
       expect(parse('[0,0.,0e0]')).toEqual([0, 0, 0]);
@@ -122,7 +122,7 @@ describe('parse(text)', () => {
     });
     it('parses quotes in strings', () => {
       expect(parse(`'\\b\\f\\n\\r\\t\\v\\0\\x0f\\u01fF\\\n\\\r\n\\\r\\\u2028\\\u2029\\a\\'\\"'`))
-        .toBe(`\b\f\n\r\t\v\0\x0f\u01FF\a'"`);
+        .toBe(`\b\f\n\r\t\v\0\x0f\u01FFa'"`);
     });
     it('parses quotes in strings', () => {
       const spy = vi.spyOn(console, 'warn')
@@ -205,9 +205,9 @@ describe('parse(text, reviver)', () => {
       .toEqual([0, undefined, 2]);
   });
   it('deletes array elements as holes on undefined, matching JSON.parse', () => {
-    const drop = (k: string, v: any) => (v === 20 ? undefined : v);
-    const result = parse('[10,20,30]', drop) as any[];
-    const expected = JSON.parse('[10,20,30]', drop) as any[];
+    const drop = (k: string, v: unknown) => (v === 20 ? undefined : v);
+    const result = parse('[10,20,30]', drop) as unknown[];
+    const expected = JSON.parse('[10,20,30]', drop) as unknown[];
 
     expect(result.length).toBe(3);
     expect(1 in result).toBe(false);
@@ -215,15 +215,15 @@ describe('parse(text, reviver)', () => {
     expect(Object.keys(result)).toEqual(Object.keys(expected));
     expect(1 in result).toBe(1 in expected);
 
-    const visited: any[] = [];
+    const visited: unknown[] = [];
     result.forEach((v) => visited.push(v));
     expect(visited).toEqual([10, 30]);
   });
   it('deletes a nested array element (array in object in array)', () => {
-    const drop = (k: string, v: any) => (v === 99 ? undefined : v);
-    const result = parse('[{a:[1,99,3]}]', drop) as any[];
-    const expected = JSON.parse('[{"a":[1,99,3]}]', drop) as any[];
-    const inner = result[0].a as any[];
+    const drop = (k: string, v: unknown) => (v === 99 ? undefined : v);
+    const result = parse('[{a:[1,99,3]}]', drop) as unknown[];
+    const expected = JSON.parse('[{"a":[1,99,3]}]', drop) as unknown[];
+    const inner = (result[0] as { a: unknown[] }).a;
 
     expect(inner.length).toBe(3);
     expect(1 in inner).toBe(false);

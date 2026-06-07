@@ -1,5 +1,5 @@
 import { expect, describe, it, vi, beforeAll, afterAll } from 'vitest';
-import { parse, stringify, RawValue } from '../src';
+import { parse, stringify, RawValue, RawString } from '../src';
 import { dec, enc, makeRng, randInt, randString, randValue } from './_helpers';
 
 // Adversarial inputs frequently contain unescaped U+2028/U+2029, which the
@@ -27,9 +27,9 @@ function assertSafe(bytes: Uint8Array, context?: () => string): void {
   } catch (ex) {
     if (!(ex instanceof SyntaxError) && !(ex instanceof TypeError)) {
       const where = context ? ` [${context()}]` : '';
-      throw new Error(
-        `unexpected error type ${(ex as any)?.constructor?.name}${where}: ${(ex as Error).message}`,
-      );
+      const name = ex instanceof Error ? ex.constructor.name : typeof ex;
+      const message = ex instanceof Error ? ex.message : String(ex);
+      throw new Error(`unexpected error type ${name}${where}: ${message}`, { cause: ex });
     }
   }
 }
@@ -138,9 +138,9 @@ describe('fuzz — differential parity and round trips', () => {
     for (let i = 0; i < 2000; i++) {
       const secret = randString(rng, 40);
       const docBytes = stringify({ subkey: secret }, { raw: true })!;
-      const parsed: any = parse(docBytes, null, { raw: 'values' });
+      const parsed = parse(docBytes, null, { raw: 'values' }) as Record<string, RawString>;
       const moved = stringify({ out: RawValue.escaped(parsed.subkey.span(), parsed.subkey.quote) }, { raw: true })!;
-      const re: any = parse(moved, null, { raw: 'values' });
+      const re = parse(moved, null, { raw: 'values' }) as Record<string, RawString>;
       expect(dec(re.out.decode())).toBe(secret);
     }
   });

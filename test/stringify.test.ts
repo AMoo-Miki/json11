@@ -1,5 +1,6 @@
 import { expect, describe, it } from 'vitest';
 import { stringify } from '../src';
+import type { StringifyOptions } from '../src/stringify';
 
 describe('stringify(value)', () => {
   describe.concurrent('Objects', () => {
@@ -182,19 +183,19 @@ describe('stringify(value)', () => {
         }
       });
 
-      // @ts-ignore
+      // @ts-expect-error `new` on an ES5-style constructor function implicitly returns `any`
       expect(stringify(new C())).toBe('{a:1,b:2}');
     });
 
     it('stringifies using user defined toJSON(key) methods', () => {
       function C() {}
       Object.assign(C.prototype, {
-        toJSON(key: any) {
+        toJSON(key: string) {
           return (key === 'a') ? 1 : 2
         }
       });
 
-      // @ts-ignore
+      // @ts-expect-error `new` on an ES5-style constructor function implicitly returns `any`
       expect(stringify({ a: new C(), b: new C() })).toBe('{a:1,b:2}');
     });
 
@@ -210,7 +211,7 @@ describe('stringify(value)', () => {
 
     it('stringifies using class defined toJSON(key) methods', () => {
       class C {
-        toJSON(key: any) {
+        toJSON(key: string) {
           return (key === 'a') ? 1 : 2
         }
       }
@@ -226,19 +227,19 @@ describe('stringify(value)', () => {
         }
       });
 
-      // @ts-ignore
+      // @ts-expect-error `new` on an ES5-style constructor function implicitly returns `any`
       expect(stringify(new C())).toBe('{a:1,b:2}');
     });
 
     it('stringifies using user defined toJSON5(key) methods', () => {
       function C() {}
       Object.assign(C.prototype, {
-        toJSON5(key: any) {
+        toJSON5(key: string) {
           return (key === 'a') ? 1 : 2
         }
       });
 
-      // @ts-ignore
+      // @ts-expect-error `new` on an ES5-style constructor function implicitly returns `any`
       expect(stringify({ a: new C(), b: new C() })).toBe('{a:1,b:2}');
     });
 
@@ -254,7 +255,7 @@ describe('stringify(value)', () => {
 
     it('stringifies using class defined toJSON5(key) methods', () => {
       class C {
-        toJSON5(key: any) {
+        toJSON5(key: string) {
           return (key === 'a') ? 1 : 2
         }
       }
@@ -270,19 +271,19 @@ describe('stringify(value)', () => {
         }
       });
 
-      // @ts-ignore
+      // @ts-expect-error `new` on an ES5-style constructor function implicitly returns `any`
       expect(stringify(new C())).toBe('{a:1,b:2}');
     });
 
     it('stringifies using user defined toJSON11(key) methods', () => {
       function C() {}
       Object.assign(C.prototype, {
-        toJSON11(key: any) {
+        toJSON11(key: string) {
           return (key === 'a') ? 1 : 2
         }
       });
 
-      // @ts-ignore
+      // @ts-expect-error `new` on an ES5-style constructor function implicitly returns `any`
       expect(stringify({ a: new C(), b: new C() })).toBe('{a:1,b:2}');
     });
 
@@ -298,7 +299,7 @@ describe('stringify(value)', () => {
 
     it('stringifies using class defined toJSON11(key) methods', () => {
       class C {
-        toJSON11(key: any) {
+        toJSON11(key: string) {
           return (key === 'a') ? 1 : 2
         }
       }
@@ -317,7 +318,7 @@ describe('stringify(value)', () => {
         },
       });
 
-      // @ts-ignore
+      // @ts-expect-error `new` on an ES5-style constructor function implicitly returns `any`
       expect(stringify(new C())).toBe('{a:2,b:2}');
     });
 
@@ -332,7 +333,7 @@ describe('stringify(value)', () => {
         },
       });
 
-      // @ts-ignore
+      // @ts-expect-error `new` on an ES5-style constructor function implicitly returns `any`
       expect(stringify(new C())).toBe('{a:2,b:2}');
     });
 
@@ -347,7 +348,7 @@ describe('stringify(value)', () => {
         },
       });
 
-      // @ts-ignore
+      // @ts-expect-error `new` on an ES5-style constructor function implicitly returns `any`
       expect(stringify(new C())).toBe('{a:2,b:2}');
     });
 
@@ -441,7 +442,7 @@ describe('stringify(value, options)', () => {
     it('overrides the granular output-shaping options regardless of how they were set', () => {
       const doc = { a: 5n, b: Infinity };
       /* The public type makes pureJson mutually exclusive with these flags, so
-       * this combination is cast through `any`: the runtime override is
+       * this combination is forced through the type: the runtime override is
        * defense-in-depth for JS callers (or casts) that bypass the type. */
       const out = stringify(doc, {
         pureJson: true,
@@ -452,7 +453,7 @@ describe('stringify(value, options)', () => {
         nonFinite: 'literal',
         trailingComma: true,
         space: 2,
-      } as any);
+      } as unknown as StringifyOptions);
       expect(out).toBe('{\n  "a": 5,\n  "b": null\n}');
       expect(() => JSON.parse(out!)).not.toThrow();
     });
@@ -791,14 +792,13 @@ describe('stringify(value, null, null, options)', () => {
 
 describe('parse errors', () => {
   it('throws on circular objects', () => {
-    let a = {};
-    // @ts-ignore
+    const a: Record<string, unknown> = {};
     a.a = a;
     expect(() => stringify(a)).toThrowError('Converting circular structure to JSON11');
   });
 
   it('throws on circular arrays', () => {
-    let a: any = [];
+    const a: unknown[] = [];
     a[0] = a;
     expect(() => stringify(a)).toThrowError('Converting circular structure to JSON11');
   });

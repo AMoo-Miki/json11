@@ -1,7 +1,32 @@
 import * as util from './util';
 import { parseBytes } from './parseBytes';
 
-export type Reviver = (this: any, key: string, value: any) => any;
+export type Reviver = (this: unknown, key: string, value: unknown) => unknown;
+
+/* A primitive JSON11 token payload: the parsed leaf values plus the raw
+ * punctuator strings the lexer carries on `Token.value`. */
+type TokenValue = string | number | bigint | boolean | null;
+
+type TokenType =
+  | 'eof'
+  | 'punctuator'
+  | 'null'
+  | 'boolean'
+  | 'numeric'
+  | 'bigint'
+  | 'string'
+  | 'identifier';
+
+interface Token {
+  type: TokenType;
+  value?: TokenValue;
+  line: number;
+  column: number;
+}
+
+/* The container frames the parser builds and the reviver walks: a plain object
+ * or an array of already-parsed values. */
+type Container = { [key: string]: unknown } | unknown[];
 
 export type Parse11Options = {
   /* Allow parsing long numeric values as BigInt.
@@ -30,17 +55,17 @@ export type Parse11Options = {
   maxDepth?: number,
 }
 
-export function parse<T = any>(
+export function parse<T = unknown>(
   text: string,
   reviver?: Reviver | null,
   options?: Parse11Options & { raw?: 'off' },
 ): T;
-export function parse<T = any>(
+export function parse<T = unknown>(
   text: Uint8Array,
   reviver?: Reviver | null,
   options?: Parse11Options,
 ): T;
-export function parse<T = any>(
+export function parse<T = unknown>(
   text: string | Uint8Array,
   reviver?: Reviver | null,
   options?: Parse11Options,
@@ -55,15 +80,15 @@ export function parse<T = any>(
     );
   }
 
-  let source: string = String(text);
+  const source: string = String(text);
   let parseState: string = 'start';
-  let stack: any[] = [];
+  const stack: Container[] = [];
   let pos: number = 0;
   let line: number = 1;
   let column: number = 0;
-  let token: any;
-  let key: any;
-  let root: any;
+  let token: Token;
+  let key: string;
+  let root: unknown;
   let lexState: string;
   let buffer: string | undefined;
   let doubleQuote: boolean;
@@ -73,7 +98,7 @@ export function parse<T = any>(
   const maxNumericDigits = options?.maxNumericDigits ?? util.MAX_NUMERIC_DIGITS_DEFAULT;
   const maxDepth = options?.maxDepth ?? util.MAX_DEPTH_DEFAULT;
 
-  const lexStates: { [key: string]: () => any } = {
+  const lexStates: { [state: string]: () => Token | undefined } = {
     default() {
       switch (c) {
         case '\t':
@@ -678,7 +703,7 @@ export function parse<T = any>(
       switch (token.type) {
         case 'identifier':
         case 'string':
-          key = token.value;
+          key = token.value as string;
           parseState = 'afterPropertyName';
           return;
 
@@ -762,16 +787,16 @@ export function parse<T = any>(
   } while (token.type !== 'eof');
 
   if (typeof reviver === 'function') {
-    return internalize({ '': root }, '', reviver, 0);
+    return internalize({ '': root }, '', reviver, 0) as T;
   }
 
-  return root;
+  return root as T;
 
-  function internalize(holder: any, name: string, reviver: (key: string, value: any) => any, depth: number): any {
+  function internalize(holder: Container, name: string, reviver: Reviver, depth: number): unknown {
     if (depth > maxDepth) {
       throw syntaxError(`JSON11: maximum nesting depth ${maxDepth} exceeded`);
     }
-    const value = holder[name];
+    const value = (holder as { [key: string]: unknown })[name];
     if (value != null && typeof value === 'object') {
       if (Array.isArray(value)) {
         for (let i = 0; i < value.length; i++) {
@@ -789,12 +814,13 @@ export function parse<T = any>(
           }
         }
       } else {
-        for (const key in value) {
-          const replacement = internalize(value, key, reviver, depth + 1);
+        const object = value as { [key: string]: unknown };
+        for (const key in object) {
+          const replacement = internalize(object, key, reviver, depth + 1);
           if (replacement === undefined) {
-            delete value[key];
+            delete object[key];
           } else {
-            Object.defineProperty(value, key, {
+            Object.defineProperty(object, key, {
               value: replacement,
               writable: true,
               enumerable: true,
@@ -808,7 +834,7 @@ export function parse<T = any>(
     return reviver.call(holder, name, value);
   }
 
-  function lex(): any {
+  function lex(): Token {
     lexState = 'default';
     buffer = '';
     doubleQuote = false;
@@ -849,7 +875,7 @@ export function parse<T = any>(
     return c;
   }
 
-  function newToken(type: string, value?: any): any {
+  function newToken(type: TokenType, value?: TokenValue): Token {
     return {
       type,
       value,
@@ -858,7 +884,7 @@ export function parse<T = any>(
     };
   }
 
-  function newNumericToken(sign: number, buffer?: string): any {
+  function newNumericToken(sign: number, buffer?: string): Token {
     const num = sign * Number(buffer);
 
     if (options?.withLongNumerals) {
@@ -1004,7 +1030,7 @@ export function parse<T = any>(
   }
 
   function push() {
-    let value;
+    let value: unknown;
 
     switch (token.type) {
       case 'punctuator':
@@ -1046,7 +1072,7 @@ export function parse<T = any>(
     }
 
     if (value !== null && typeof value === 'object') {
-      stack.push(value);
+      stack.push(value as Container);
 
       if (Array.isArray(value)) {
         parseState = 'beforeArrayValue';

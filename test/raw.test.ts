@@ -3,27 +3,40 @@ import { parse, stringify, RawString, RawValue, unsafeEncodeAsJSON } from '../sr
 import { QUOTE_SINGLE } from '../src/raw';
 import { dec, enc, makeRng, randString } from './_helpers';
 
+/* The runtime objects these suites monkeypatch (String, globalThis,
+ * TextDecoder.prototype, Buffer.prototype) plus the function members they swap. */
+type MethodHolder = Record<string, unknown>;
+type AnyFunction = (this: unknown, ...args: unknown[]) => unknown;
+
+/* Parse byte input in raw-values mode; the curated inputs in this file all yield
+ * an object whose string values are borrowed RawString spans. */
+function parseRaw(input: Uint8Array): Record<string, RawString> {
+  return parse(input, null, { raw: 'values' }) as Record<string, RawString>;
+}
+
 /* Wrap every byte→String entry point and record each call, so a region asserted
  * to be byte-only can prove it made zero of them (mirrors heapHygiene B1). The
  * wrapper bodies call only push/apply, so they cannot recurse through String(…). */
 function installByteToStringSpies() {
   const calls: string[] = [];
-  const saved: Array<[any, string, any]> = [];
-  const wrap = (obj: any, key: string) => {
-    if (!obj || typeof obj[key] !== 'function') return;
-    const orig = obj[key];
-    saved.push([obj, key, orig]);
-    obj[key] = function (...a: any[]) {
+  const saved: Array<[MethodHolder, string, unknown]> = [];
+  const wrap = (obj: object | null | undefined, key: string) => {
+    if (!obj) return;
+    const target = obj as MethodHolder;
+    if (typeof target[key] !== 'function') return;
+    const orig = target[key] as AnyFunction;
+    saved.push([target, key, orig]);
+    target[key] = function (this: unknown, ...a: unknown[]) {
       calls.push(key);
       return orig.apply(this, a);
     };
   };
   wrap(String, 'fromCharCode');
   wrap(String, 'fromCodePoint');
-  wrap(globalThis as any, 'String');
-  wrap((globalThis as any).TextDecoder.prototype, 'decode');
+  wrap(globalThis, 'String');
+  wrap(TextDecoder.prototype, 'decode');
   for (const m of ['toString', 'utf8Slice', 'latin1Slice', 'asciiSlice', 'ucs2Slice', 'hexSlice']) {
-    wrap(Buffer.prototype as any, m);
+    wrap(Buffer.prototype, m);
   }
   return {
     calls,
@@ -39,11 +52,12 @@ function installByteToStringSpies() {
  * String object and its other statics intact. */
 function installFromCodeArgSpies() {
   const args: number[] = [];
-  const saved: Array<[any, string, any]> = [];
-  const wrap = (obj: any, key: string) => {
-    const orig = obj[key];
-    saved.push([obj, key, orig]);
-    obj[key] = function (...a: any[]) {
+  const saved: Array<[MethodHolder, string, unknown]> = [];
+  const wrap = (obj: object, key: string) => {
+    const target = obj as MethodHolder;
+    const orig = target[key] as AnyFunction;
+    saved.push([target, key, orig]);
+    target[key] = function (this: unknown, ...a: unknown[]) {
       for (const x of a) if (typeof x === 'number') args.push(x);
       return orig.apply(this, a);
     };
@@ -115,14 +129,14 @@ describe('RawString', () => {
   });
 
   it('instance decode() of a single-quoted value is unaffected (forwards its quote)', () => {
-    const doc: any = parse(enc(`{"k":'a"b'}`), null, { raw: 'values' });
+    const doc = parseRaw(enc(`{"k":'a"b'}`));
     expect(doc.k).toBeInstanceOf(RawString);
     expect(doc.k.quote).toBe(QUOTE_SINGLE);
     expect(dec(doc.k.decode())).toBe('a"b');
   });
 
   it('decode never constructs a String (returns Uint8Array)', () => {
-    const doc: any = parse(enc('{"s":"secret"}'), null, { raw: 'values' });
+    const doc = parseRaw(enc('{"s":"secret"}'));
     expect(doc.s.decode()).toBeInstanceOf(Uint8Array);
     expect(doc.s.span()).toBeInstanceOf(Uint8Array);
   });
@@ -153,12 +167,12 @@ describe('RawValue', () => {
 
   it('escaped still accepts a legitimate same-quote span lifted from a document', () => {
     const docBytes = stringify({ subkey: 'he said "hi"\tand left' }, { raw: true })!;
-    const parsed: any = parse(docBytes, null, { raw: 'values' });
+    const parsed = parseRaw(docBytes);
     const span = parsed.subkey.span();
     const quote = parsed.subkey.quote;
     // Validation must not reject a real span; the splice round-trips byte-identically.
     const out = stringify({ moved: RawValue.escaped(span, quote) }, { raw: true })!;
-    const re: any = parse(out, null, { raw: 'values' });
+    const re = parseRaw(out);
     expect(dec(re.moved.decode())).toBe('he said "hi"\tand left');
     expect(dec(out).includes(dec(span))).toBe(true);
   });
@@ -177,13 +191,13 @@ describe('Bar #4 — escape consistency, byte-identical span splice', () => {
       // Produce a JSON11 document (bytes) the canonical way.
       const docBytes = stringify({ subkey: secret, n: i }, { raw: true })!;
       // Lift the value as a borrowed span (no String for the secret).
-      const parsed: any = parse(docBytes, null, { raw: 'values' });
+      const parsed = parseRaw(docBytes);
       const span = parsed.subkey.span();
       const quote = parsed.subkey.quote;
       // Splice that exact span into a fresh JSON11 document.
       const out = stringify({ moved: RawValue.escaped(span, quote) }, { raw: true })!;
       // Re-parse and confirm the moved value decodes to the original secret.
-      const re: any = parse(out, null, { raw: 'values' });
+      const re = parseRaw(out);
       expect(dec(re.moved.decode())).toBe(secret);
       // The escaped inner bytes are present verbatim (no re-escaping happened).
       expect(dec(out).includes(dec(span))).toBe(true);
@@ -195,7 +209,7 @@ describe('Bar #4 — escape consistency, byte-identical span splice', () => {
     for (let i = 0; i < 1500; i++) {
       const original = enc(randString(rng, 30));
       const out = stringify({ v: RawValue.raw(original) }, { raw: true })!;
-      const re: any = parse(out, null, { raw: 'values' });
+      const re = parseRaw(out);
       expect(Array.from(re.v.decode())).toEqual(Array.from(original));
     }
   });
@@ -206,7 +220,7 @@ describe('Bar #4 — escape consistency, byte-identical span splice', () => {
     // argument. Parsing happens OUTSIDE the spies because it legitimately
     // stringifies the keys ("subkey"/"meta").
     const secretBuf = enc('{"subkey":"\uE007do-not-stringify-me\u{10FFFD}","meta":"ok"}');
-    const doc: any = parse(secretBuf, null, { raw: 'values' });
+    const doc = parseRaw(secretBuf);
     expect(doc.subkey).toBeInstanceOf(RawString);
 
     // 1) The value's own accessors funnel through ZERO byte→String primitives.
@@ -263,46 +277,46 @@ describe('no-String surface — implicit coercion and JSON fail closed', () => {
     const rs = new RawString(enc('"S3cr3t-VALUE"'), 1, 13, 0x22);
     expect(() => `${rs}`).toThrow(TypeError);
     expect(() => String(rs)).toThrow(TypeError);
-    expect(() => '' + (rs as any)).toThrow(TypeError);
+    expect(() => '' + (rs as unknown as string)).toThrow(TypeError);
     expect(() => [rs].join(',')).toThrow(TypeError);
-    expect(() => (rs as any).valueOf()).toThrow(TypeError);
+    expect(() => (rs as unknown as string).valueOf()).toThrow(TypeError);
   });
 
   it('JSON.stringify throws for any raw-parsed tree (secret or not)', () => {
-    const doc: any = parse(enc('{"subkey":"secret","meta":"ok"}'), null, { raw: 'values' });
+    const doc = parseRaw(enc('{"subkey":"secret","meta":"ok"}'));
     expect(() => JSON.stringify(doc)).toThrow(TypeError);
     expect(() => JSON.stringify(doc.subkey)).toThrow(TypeError);
   });
 
   it('unsafeDecodeToString() is the explicit single-value hatch', () => {
-    const doc: any = parse(enc('{"k":"S3cr3t\\u0041"}'), null, { raw: 'values' });
+    const doc = parseRaw(enc('{"k":"S3cr3t\\u0041"}'));
     expect(doc.k.unsafeDecodeToString()).toBe('S3cr3tA');
   });
 });
 
 describe('unsafeEncodeAsJSON — the deliberate whole-tree JSON opt-in', () => {
   it('materializes RawStrings and round-trips through JSON.stringify', () => {
-    const doc: any = parse(enc('{"a":"x\\u0041","b":["y",1,true,null],"n":2}'), null, { raw: 'values' });
+    const doc = parse(enc('{"a":"x\\u0041","b":["y",1,true,null],"n":2}'), null, { raw: 'values' });
     const plain = unsafeEncodeAsJSON(doc);
     expect(plain).toEqual({ a: 'xA', b: ['y', 1, true, null], n: 2 });
     expect(JSON.stringify(plain)).toBe('{"a":"xA","b":["y",1,true,null],"n":2}');
   });
 
   it('does not mutate the source tree (RawStrings stay byte-only)', () => {
-    const doc: any = parse(enc('{"a":"x"}'), null, { raw: 'values' });
+    const doc = parseRaw(enc('{"a":"x"}'));
     unsafeEncodeAsJSON(doc);
     expect(doc.a).toBeInstanceOf(RawString);
   });
 
   it('rebuilds objects prototype-safely', () => {
-    const doc: any = parse(enc('{"__proto__":"polluted","ok":"v"}'), null, { raw: 'values' });
-    const plain: any = unsafeEncodeAsJSON(doc);
+    const doc = parse(enc('{"__proto__":"polluted","ok":"v"}'), null, { raw: 'values' });
+    const plain = unsafeEncodeAsJSON(doc);
     expect(Object.getPrototypeOf(plain)).toBe(Object.prototype);
     expect(Object.prototype.hasOwnProperty.call(plain, '__proto__')).toBe(true);
   });
 
   it('decodes a RawValue defensively via the StringSink path', () => {
-    const plain = unsafeEncodeAsJSON({ v: RawValue.escaped(enc('a\\nb'), 0x22) }) as any;
+    const plain = unsafeEncodeAsJSON({ v: RawValue.escaped(enc('a\\nb'), 0x22) }) as { v: string };
     expect(plain.v).toBe('a\nb');
   });
 });
@@ -318,7 +332,7 @@ describe('byte parser separatorWarn — fires on the value path and leaks no val
     const spy = vi.spyOn(console, 'warn').mockImplementation(() => null);
     try {
       // Distinctive ascii markers bracket a single raw U+2028 in the value.
-      const doc: any = parse(enc('{"k":"LEFTMARK\u2028RIGHTMARK"}'), null, { raw: 'values' });
+      const doc = parseRaw(enc('{"k":"LEFTMARK\u2028RIGHTMARK"}'));
       expect(doc.k).toBeInstanceOf(RawString);
 
       expect(spy).toHaveBeenCalledTimes(1);

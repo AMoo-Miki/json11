@@ -61,14 +61,14 @@ describe('adversarial: UTF-8 boundary forms (decodeUtf8 accept/reject)', () => {
 
   it('accepts the exact maximum scalar U+10FFFF (F4 8F BF BF) and decodes it verbatim', () => {
     const max = [0xf4, 0x8f, 0xbf, 0xbf];
-    const doc: any = parse(buf('{"k":"', max, '"}'), null, { raw: 'values' });
+    const doc = parse(buf('{"k":"', max, '"}'), null, { raw: 'values' }) as Record<string, RawString>;
     expect(Array.from(doc.k.decode())).toEqual(max);
     expect(doc.k.unsafeDecodeToString()).toBe('\u{10FFFF}');
   });
 
   it('accepts U+0080, U+07FF, U+0800, U+FFFF boundary scalars', () => {
     const text = '"\u0080\u07ff\u0800\uffff"';
-    const doc: any = parse(buf('{"k":', enc(text), '}'), null, { raw: 'values' });
+    const doc = parse(buf('{"k":', enc(text), '}'), null, { raw: 'values' }) as Record<string, RawString>;
     expect(doc.k.unsafeDecodeToString()).toBe('\u0080\u07ff\u0800\uffff');
     expect(Array.from(doc.k.decode())).toEqual(Array.from(enc('\u0080\u07ff\u0800\uffff')));
   });
@@ -90,8 +90,8 @@ describe('adversarial: malformed surrogate escapes decode with U+FFFD parity', (
   for (const inner of cases) {
     it(`byte decode matches string parse for "${inner}"`, () => {
       const text = `{"k":"${inner}"}`;
-      const expected = (parse(text) as any).k as string;
-      const doc: any = parse(enc(text), null, { raw: 'values' });
+      const expected = (parse(text) as { k: string }).k;
+      const doc = parse(enc(text), null, { raw: 'values' }) as Record<string, RawString>;
       expect(doc.k.unsafeDecodeToString()).toBe(expected);
       expect(Array.from(doc.k.decode())).toEqual(Array.from(enc(expected)));
     });
@@ -140,23 +140,23 @@ describe('adversarial: byte parse does not pollute Object.prototype', () => {
     it(`stays clean for ${t}`, () => {
       expect(Object.prototype).not.toHaveProperty('polluted');
       const doc = parse(enc(t));
-      expect((Object.prototype as any).polluted).toBeUndefined();
-      expect(({} as any).polluted).toBeUndefined();
+      expect((Object.prototype as Record<string, unknown>).polluted).toBeUndefined();
+      expect(({} as Record<string, unknown>).polluted).toBeUndefined();
       void doc;
       expect(Object.prototype).not.toHaveProperty('polluted');
     });
   }
 
   it('keeps __proto__ as a real own property (not a prototype mutation)', () => {
-    const doc: any = parse(enc('{"__proto__":1}'));
+    const doc = parse(enc('{"__proto__":1}')) as Record<string, unknown>;
     expect(Object.getPrototypeOf(doc)).toBe(Object.prototype);
     expect(Object.prototype.hasOwnProperty.call(doc, '__proto__')).toBe(true);
     expect(doc.__proto__).toBe(1);
   });
 
   it('is safe in raw mode too', () => {
-    const doc: any = parse(enc('{"__proto__":{"polluted":"x"}}'), null, { raw: 'values' });
-    expect((Object.prototype as any).polluted).toBeUndefined();
+    const doc = parse(enc('{"__proto__":{"polluted":"x"}}'), null, { raw: 'values' });
+    expect((Object.prototype as Record<string, unknown>).polluted).toBeUndefined();
     void doc;
   });
 });
@@ -176,8 +176,8 @@ describe('adversarial: escaped line continuations decode like the string path', 
   for (const [name, inner] of variants) {
     it(`handles a ${name} continuation`, () => {
       const text = `{"k":${inner}}`;
-      const expected = (parse(text) as any).k as string;
-      const doc: any = parse(enc(text), null, { raw: 'values' });
+      const expected = (parse(text) as { k: string }).k;
+      const doc = parse(enc(text), null, { raw: 'values' }) as Record<string, RawString>;
       expect(doc.k.unsafeDecodeToString()).toBe(expected);
       expect(Array.from(doc.k.decode())).toEqual(Array.from(enc(expected)));
     });
@@ -196,20 +196,20 @@ describe('adversarial: pathological valid inputs are bounded and correct', () =>
   });
 
   it('an enormous numeral does not hang', () => {
-    const n: any = parse(enc('9'.repeat(100_000)));
+    const n = parse(enc('9'.repeat(100_000)));
     expect(typeof n).toBe('number');
     expect(n).toBe(Infinity);
   });
 
   it('a very long property name', () => {
     const key = 'a'.repeat(100_000);
-    const doc: any = parse(buf('{', key, ':1}'));
+    const doc = parse(buf('{', key, ':1}')) as Record<string, unknown>;
     expect(doc[key]).toBe(1);
   });
 
   it('a very long string value yields a same-length span/decoded copy without a String', () => {
     const big = 'a'.repeat(1_000_000);
-    const doc: any = parse(buf('{"k":"', big, '"}'), null, { raw: 'values' });
+    const doc = parse(buf('{"k":"', big, '"}'), null, { raw: 'values' }) as Record<string, RawString>;
     expect(doc.k).toBeInstanceOf(RawString);
     expect(doc.k.span().length).toBe(1_000_000);
     expect(doc.k.decode().length).toBe(1_000_000);

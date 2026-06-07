@@ -64,16 +64,16 @@ describe('parse(Uint8Array) — positive', () => {
   });
 
   it('reviver deletes an array element as a hole on undefined (byte ≡ string ≡ JSON.parse)', () => {
-    const drop = (k: string, v: any) => (v === 20 ? undefined : v);
-    const fromBytes = parse(enc('[10,20,30]'), drop) as any[];
-    const fromString = parse('[10,20,30]', drop) as any[];
-    const fromJSON = JSON.parse('[10,20,30]', drop) as any[];
+    const drop = (k: string, v: unknown) => (v === 20 ? undefined : v);
+    const fromBytes = parse(enc('[10,20,30]'), drop) as unknown[];
+    const fromString = parse('[10,20,30]', drop) as unknown[];
+    const fromJSON = JSON.parse('[10,20,30]', drop) as unknown[];
 
     expect(fromBytes.length).toBe(3);
     expect(1 in fromBytes).toBe(false);
     expect(Object.keys(fromBytes)).not.toContain('1');
 
-    const visited: any[] = [];
+    const visited: unknown[] = [];
     fromBytes.forEach((v) => visited.push(v));
     expect(visited).toEqual([10, 30]);
 
@@ -85,7 +85,7 @@ describe('parse(Uint8Array) — positive', () => {
   });
 
   it('reviver deletes an object key on undefined (byte ≡ string, object branch unchanged)', () => {
-    const drop = (k: string, v: any) => (k === 'a' ? undefined : v);
+    const drop = (k: string, v: unknown) => (k === 'a' ? undefined : v);
     const fromBytes = parse(enc('{a:1,b:2}'), drop) as Record<string, unknown>;
     const fromString = parse('{a:1,b:2}', drop) as Record<string, unknown>;
 
@@ -95,10 +95,10 @@ describe('parse(Uint8Array) — positive', () => {
   });
 
   it('reviver deletes a nested array element (array in object in array; byte ≡ string)', () => {
-    const drop = (k: string, v: any) => (v === 99 ? undefined : v);
-    const fromBytes = parse(enc('[{a:[1,99,3]}]'), drop) as any[];
-    const fromString = parse('[{a:[1,99,3]}]', drop) as any[];
-    const inner = fromBytes[0].a as any[];
+    const drop = (k: string, v: unknown) => (v === 99 ? undefined : v);
+    const fromBytes = parse(enc('[{a:[1,99,3]}]'), drop) as unknown[];
+    const fromString = parse('[{a:[1,99,3]}]', drop) as unknown[];
+    const inner = (fromBytes[0] as { a: unknown[] }).a;
 
     expect(inner.length).toBe(3);
     expect(1 in inner).toBe(false);
@@ -209,7 +209,7 @@ describe('parse — BigInt digit-length cap (DoS)', () => {
 
 describe('parse(Uint8Array, …, { raw }) — borrowed spans', () => {
   it('returns RawString for values, plain strings for keys', () => {
-    const doc: any = parse(enc('{"subkey":"S3cr3t\\u0041","meta":"ok"}'), null, { raw: 'values' });
+    const doc = parse(enc('{"subkey":"S3cr3t\\u0041","meta":"ok"}'), null, { raw: 'values' }) as Record<string, RawString>;
     expect(Object.keys(doc)).toEqual(['subkey', 'meta']);
     expect(doc.subkey).toBeInstanceOf(RawString);
     expect(doc.meta).toBeInstanceOf(RawString);
@@ -217,7 +217,7 @@ describe('parse(Uint8Array, …, { raw }) — borrowed spans', () => {
 
   it('span aliases the input buffer (escaped inner bytes, verbatim)', () => {
     const buf = enc('{"x":"a\\u0041b"}');
-    const doc: any = parse(buf, null, { raw: 'values' });
+    const doc = parse(buf, null, { raw: 'values' }) as Record<string, RawString>;
     const span = doc.x.span();
     expect(dec(span)).toBe('a\\u0041b');
     // span is a view: it shares memory with the input buffer
@@ -225,7 +225,7 @@ describe('parse(Uint8Array, …, { raw }) — borrowed spans', () => {
   });
 
   it('decode() unescapes to fresh bytes; copy() copies the escaped span', () => {
-    const doc: any = parse(enc('{"x":"a\\u0041b\\n\\t\\uD83D\\uDE00"}'), null, { raw: 'values' });
+    const doc = parse(enc('{"x":"a\\u0041b\\n\\t\\uD83D\\uDE00"}'), null, { raw: 'values' }) as Record<string, RawString>;
     expect(dec(doc.x.decode())).toBe('aAb\n\t\u{1F600}');
     expect(dec(doc.x.copy())).toBe('a\\u0041b\\n\\t\\uD83D\\uDE00');
   });
@@ -235,7 +235,7 @@ describe('parse(Uint8Array, …, { raw }) — borrowed spans', () => {
     for (let i = 0; i < 1000; i++) {
       const s = randString(rng, 30);
       const text = `{"v":${JSON.stringify(s)}}`;
-      const doc: any = parse(enc(text), null, { raw: 'values' });
+      const doc = parse(enc(text), null, { raw: 'values' }) as Record<string, RawString>;
       expect(doc.v.unsafeDecodeToString()).toBe(s);
     }
   });
@@ -248,7 +248,7 @@ describe('parse(Uint8Array, …, { raw }) — borrowed spans', () => {
   });
 
   it("treats 'all' like 'values' for object shape (keys are JS strings)", () => {
-    const doc: any = parse(enc('{"k":"v"}'), null, { raw: 'all' });
+    const doc = parse(enc('{"k":"v"}'), null, { raw: 'all' }) as Record<string, RawString>;
     expect(typeof Object.keys(doc)[0]).toBe('string');
     expect(doc.k).toBeInstanceOf(RawString);
   });
@@ -312,7 +312,7 @@ describe('reviver nesting-depth cap (byte ≡ string)', () => {
   /* `n` nested arrays around a leaf 0; the deepest internalize call is on the
    * leaf at depth `n`, so the cap rejects when n > maxDepth. */
   const nestedText = (n: number): string => '['.repeat(n) + '0' + ']'.repeat(n);
-  const identity = (_k: string, v: any): any => v;
+  const identity = (_k: string, v: unknown): unknown => v;
   const opts = { maxDepth: 50 } as const;
 
   it('rejects past the cap on both parsers with a typed SyntaxError', () => {
@@ -338,6 +338,6 @@ describe('reviver nesting-depth cap (byte ≡ string)', () => {
 
 /* A stable serialization for differential generation: avoids quote-weight
  * surprises by forcing double quotes, and includes BigInt as <n>. */
-function JSON11stringifyStable(v: any): string {
+function JSON11stringifyStable(v: unknown): string {
   return stringify(v, { quote: '"' }) ?? 'null';
 }

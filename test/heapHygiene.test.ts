@@ -14,8 +14,13 @@
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 import crypto from 'node:crypto';
 import v8 from 'node:v8';
-import { parse, stringify, RawValue, unsafeEncodeAsJSON } from '../src';
+import { parse, stringify, RawValue, RawString, unsafeEncodeAsJSON } from '../src';
 import { enc, makeRng, randString } from './_helpers';
+
+/* The runtime objects these probes monkeypatch (String, globalThis,
+ * TextDecoder.prototype, Buffer.prototype) plus the function members they swap. */
+type MethodHolder = Record<string, unknown>;
+type AnyFunction = (this: unknown, ...args: unknown[]) => unknown;
 
 // ---------- byte construction helpers (never build a String of a secret) ----------
 
@@ -55,7 +60,7 @@ function docWith(valueInner: Uint8Array): Uint8Array {
 describe('A — zero-copy aliasing of the input (no String copy was made)', () => {
   it('span() is a live view of the caller buffer; mutating the source changes it [X/Z]', () => {
     const input = Buffer.from('{"k":"SENTINEL_BYTES"}', 'utf8');
-    const doc: any = parse(input, null, { raw: 'values' });
+    const doc = parse(input, null, { raw: 'values' }) as Record<string, RawString>;
     const view = doc.k.span();
 
     expect(view).toBeInstanceOf(Uint8Array);
@@ -69,7 +74,7 @@ describe('A — zero-copy aliasing of the input (no String copy was made)', () =
   });
 
   it('decode() returns a Uint8Array (never a string) that the caller can zero [X/Z]', () => {
-    const doc: any = parse(docWith(makeSecretBytes()), null, { raw: 'values' });
+    const doc = parse(docWith(makeSecretBytes()), null, { raw: 'values' }) as Record<string, RawString>;
     const decoded = doc.k.decode();
     expect(decoded).toBeInstanceOf(Uint8Array);
     expect(typeof decoded).not.toBe('string');
@@ -83,12 +88,14 @@ describe('A — zero-copy aliasing of the input (no String copy was made)', () =
 /* Every way to turn bytes into a JS String funnels through one of these. */
 function installCountingSpies() {
   const calls: string[] = [];
-  const saved: Array<[any, string, any]> = [];
-  const wrap = (obj: any, key: string) => {
-    if (!obj || typeof obj[key] !== 'function') return;
-    const orig = obj[key];
-    saved.push([obj, key, orig]);
-    obj[key] = function (...a: any[]) {
+  const saved: Array<[MethodHolder, string, unknown]> = [];
+  const wrap = (obj: object | null | undefined, key: string) => {
+    if (!obj) return;
+    const target = obj as MethodHolder;
+    if (typeof target[key] !== 'function') return;
+    const orig = target[key] as AnyFunction;
+    saved.push([target, key, orig]);
+    target[key] = function (this: unknown, ...a: unknown[]) {
       calls.push(key);
       return orig.apply(this, a);
     };
@@ -99,10 +106,10 @@ function installCountingSpies() {
   // a byte→String entry point, so spy it too. The value accessors are numeric-only
   // and never call it; if a future regression routes value bytes through String(…)
   // this catches it. The wrapper itself calls only push/apply, so it can't recurse.
-  wrap(globalThis as any, 'String');
-  wrap((globalThis as any).TextDecoder.prototype, 'decode');
+  wrap(globalThis, 'String');
+  wrap(TextDecoder.prototype, 'decode');
   for (const m of ['toString', 'utf8Slice', 'latin1Slice', 'asciiSlice', 'ucs2Slice', 'hexSlice']) {
-    wrap(Buffer.prototype as any, m);
+    wrap(Buffer.prototype, m);
   }
   return {
     calls,
@@ -116,11 +123,12 @@ function installCountingSpies() {
  * prove specific value code points never get stringified even one char at a time. */
 function installArgRecordingSpies() {
   const args: number[] = [];
-  const saved: Array<[any, string, any]> = [];
-  const wrap = (obj: any, key: string) => {
-    const orig = obj[key];
-    saved.push([obj, key, orig]);
-    obj[key] = function (...a: any[]) {
+  const saved: Array<[MethodHolder, string, unknown]> = [];
+  const wrap = (obj: object, key: string) => {
+    const target = obj as MethodHolder;
+    const orig = target[key] as AnyFunction;
+    saved.push([target, key, orig]);
+    target[key] = function (this: unknown, ...a: unknown[]) {
       for (const x of a) if (typeof x === 'number') args.push(x);
       return orig.apply(this, a);
     };
@@ -146,7 +154,7 @@ describe('B — byte→String primitives are never used on the value', () => {
       enc('\u{1F4A9}'),
     ]);
     // Parse OUTSIDE the spy (parsing legitimately stringifies structure/keys).
-    const doc: any = parse(docWith(value), null, { raw: 'values' });
+    const doc = parse(docWith(value), null, { raw: 'values' }) as Record<string, RawString>;
 
     const spy = installCountingSpies();
     try {
@@ -177,7 +185,7 @@ describe('B — byte→String primitives are never used on the value', () => {
 
     const spy = installArgRecordingSpies();
     try {
-      const doc: any = parse(input, null, { raw: 'values' });
+      const doc = parse(input, null, { raw: 'values' }) as Record<string, RawString>;
       doc.k.decode(); // exercise decode under the probe too
     } finally {
       spy.restore();
@@ -195,22 +203,24 @@ describe('B — byte→String primitives are never used on the value', () => {
     const secret = makeSecretBytes();
     const needle = Buffer.from(secret).toString('latin1'); // a String of the secret, used only as the spy's reference
     const hits: string[] = [];
-    const saved: Array<[any, string, any]> = [];
-    const wrap = (obj: any, key: string) => {
-      if (!obj || typeof obj[key] !== 'function') return;
-      const orig = obj[key];
-      saved.push([obj, key, orig]);
-      obj[key] = function (...a: any[]) {
+    const saved: Array<[MethodHolder, string, unknown]> = [];
+    const wrap = (obj: object | null | undefined, key: string) => {
+      if (!obj) return;
+      const target = obj as MethodHolder;
+      if (typeof target[key] !== 'function') return;
+      const orig = target[key] as AnyFunction;
+      saved.push([target, key, orig]);
+      target[key] = function (this: unknown, ...a: unknown[]) {
         const out = orig.apply(this, a);
         if (typeof out === 'string' && out.includes(needle)) hits.push(key);
         return out;
       };
     };
     try {
-      wrap(Buffer.prototype as any, 'toString');
-      wrap((globalThis as any).TextDecoder.prototype, 'decode');
+      wrap(Buffer.prototype, 'toString');
+      wrap(TextDecoder.prototype, 'decode');
       const input = docWith(secret);
-      const doc: any = parse(input, null, { raw: 'values' });
+      const doc = parse(input, null, { raw: 'values' }) as Record<string, RawString>;
       doc.k.span();
       doc.k.decode();
       stringify({ moved: RawValue.escaped(doc.k.span(), doc.k.quote) }, { raw: true });
@@ -261,7 +271,7 @@ describe('C — no lingering String of the secret on the heap', () => {
     const secret = makeSecretBytes();
 
     let input: Uint8Array | null = docWith(secret);
-    let doc: any = parse(input, null, { raw: 'values' });
+    let doc: Record<string, RawString> | null = parse(input, null, { raw: 'values' }) as Record<string, RawString>;
     let out: Uint8Array | null =
       stringify({ moved: RawValue.escaped(doc.k.span(), doc.k.quote) }, { raw: true }) as Uint8Array;
     let decoded: Uint8Array | null = doc.k.decode();
@@ -275,7 +285,11 @@ describe('C — no lingering String of the secret on the heap', () => {
     input!.fill(0);
     out!.fill(0);
     decoded!.fill(0);
+    /* Dropping these references is the point of Phase 2 (prove nothing retains the
+     * secret after the caller lets go), not a dead store. */
+    // eslint-disable-next-line no-useless-assignment
     input = out = decoded = null;
+    // eslint-disable-next-line no-useless-assignment
     doc = null;
     global.gc?.();
     global.gc?.();
@@ -284,7 +298,7 @@ describe('C — no lingering String of the secret on the heap', () => {
 
   it('positive control: the sweep DOES find a secret materialized via unsafeDecodeToString() [methodology check]', async () => {
     const secret = makeSecretBytes();
-    const doc: any = parse(docWith(secret), null, { raw: 'values' });
+    const doc = parse(docWith(secret), null, { raw: 'values' }) as Record<string, RawString>;
     const leaked = doc.k.unsafeDecodeToString(); // the explicit hatch -> a real String of the secret
     global.gc?.();
     expect(await reachableSecretString(secret)).toBe(true);
@@ -293,8 +307,8 @@ describe('C — no lingering String of the secret on the heap', () => {
 
   it('positive control: the sweep DOES find a secret materialized via unsafeEncodeAsJSON() [methodology check]', async () => {
     const secret = makeSecretBytes();
-    const doc: any = parse(docWith(secret), null, { raw: 'values' });
-    const leaked: any = unsafeEncodeAsJSON(doc); // the deliberate whole-tree JSON opt-in
+    const doc = parse(docWith(secret), null, { raw: 'values' });
+    const leaked = unsafeEncodeAsJSON(doc) as { k: string }; // the deliberate whole-tree JSON opt-in
     global.gc?.();
     expect(await reachableSecretString(secret)).toBe(true);
     expect(leaked.k.length).toBe(32); // keep the materialized tree reachable through the assertion
@@ -305,7 +319,7 @@ describe('C — no lingering String of the secret on the heap', () => {
 
 describe('E — the no-String surface fails closed and the hatches are the only doors', () => {
   it('JSON.stringify / implicit coercion throw for a raw-parsed value (never leak) [X]', () => {
-    const doc: any = parse(docWith(makeSecretBytes()), null, { raw: 'values' });
+    const doc = parse(docWith(makeSecretBytes()), null, { raw: 'values' }) as Record<string, RawString>;
     expect(Object.keys(doc.k)).not.toContain('source');
     expect(() => JSON.stringify(doc)).toThrow(TypeError);
     expect(() => `${doc.k}`).toThrow(TypeError);
@@ -315,7 +329,7 @@ describe('E — the no-String surface fails closed and the hatches are the only 
   });
 
   it('unsafeDecodeToString() and unsafeEncodeAsJSON() route through a byte→String primitive [X-hatch]', () => {
-    const doc: any = parse(docWith(makeSecretBytes()), null, { raw: 'values' });
+    const doc = parse(docWith(makeSecretBytes()), null, { raw: 'values' }) as Record<string, RawString>;
 
     let spy = installCountingSpies();
     try {
@@ -360,8 +374,8 @@ describe('D — decoded value bytes are correct (no-String must not mean wrong)'
   it('decode() bytes equal the string-path value re-encoded, over an adversarial corpus [correctness]', () => {
     const check = (s: string) => {
       const text = `{"k":${JSON.stringify(s)}}`;
-      const expected = enc((parse(text) as any).k); // string path, then re-encode to bytes
-      const doc: any = parse(enc(text), null, { raw: 'values' });
+      const expected = enc((parse(text) as { k: string }).k); // string path, then re-encode to bytes
+      const doc = parse(enc(text), null, { raw: 'values' }) as Record<string, RawString>;
       expect(Array.from(doc.k.decode())).toEqual(Array.from(expected));
     };
     for (const s of adversarial) check(s);
