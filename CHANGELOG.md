@@ -11,6 +11,12 @@ This project follows [Semantic Versioning]; the format is based on [Keep a Chang
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html
 [Keep a Changelog]: https://keepachangelog.com/en/1.1.0/
 
+## [Unreleased]
+
+### Fixed
+
+- **`bin` field declared in object form.** `package.json` now specifies `"bin": { "json11": "dist/cli.mjs" }` instead of the bare string `"./dist/cli.mjs"`, the form npm silently auto-corrected (with a warning) at publish time. No change to the installed `json11` command; it removes the publish-time warning.
+
 ## [3.0.0] - 2026-06-06
 
 The first independent JSON11 release (forked from JSON5 v2.2.3). This is a **major** release; the breaking changes below are intentional and are collected under **Breaking**.
@@ -57,4 +63,5 @@ The first independent JSON11 release (forked from JSON5 v2.2.3). This is a **maj
 - Documented the raw-mode TypeScript caveats: parsed raw string *values* are `RawString`, not the `string` an annotation may claim; the `Uint8Array` `stringify` return is selected only for a **literal** `raw: true`; and `parse` keeps its `string` and `Uint8Array` overloads separate (no `string | Uint8Array` union overload, to preserve the no-`String` guarantee).
 - Documented the full `RawString`/`RawValue` coercion matrix (`toString` redacts; `Symbol.toPrimitive`/`valueOf`/`toJSON` throw) and a consolidated **Known limitations** section (quoted-key deep-nest serialize cost; byte-parser error-position drift, cosmetic; `pureJson` + BigInt precision; `raw: 'all'` aliasing `raw: 'values'`).
 
+[Unreleased]: https://github.com/AMoo-Miki/JSON11/compare/v3.0.0...HEAD
 [3.0.0]: https://github.com/AMoo-Miki/JSON11/releases/tag/v3.0.0

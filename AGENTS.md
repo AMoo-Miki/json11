@@ -286,6 +286,12 @@ as phased units (skeleton+table → byte serializer → byte parser → fuzz →
 Follow that grain: don't mix a grammar fix and a perf refactor in one commit.
 Never commit unless asked (MANDATORY RULE #3).
 
+**No hard wraps in commit messages or the CHANGELOG.** Write each paragraph or
+bullet as a single soft-wrapped line; never insert newlines mid-paragraph to hit
+a column width (the README and CHANGELOG are deliberately unwrapped, and commit
+bodies follow the same rule). Newlines stay meaningful — blank lines between
+paragraphs, one line per bullet — not a function of terminal width.
+
 ### 10. Documentation, comments, and naming
 - Block comments use `/* … */`; reserve `//` for genuine one-liners. (Most of the
   codebase already uses `/* */` for multi-line intent comments — match it.)
