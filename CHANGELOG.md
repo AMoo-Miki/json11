@@ -16,27 +16,36 @@ This project follows [Semantic Versioning]; the format is based on
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html
 [Keep a Changelog]: https://keepachangelog.com/en/1.1.0/
 
-## [Unreleased]
+## [3.0.0-alpha.1]
 
-### Added
+The first independent JSON11 release (forked from JSON5 v2.2.3). This is a
+**major** release; the breaking changes below are intentional and are collected
+under **Breaking**. The entire `raw`/byte-mode surface (`RawString`/`RawValue`,
+the `raw` parse/stringify option, the byte parser/serializer) is **new in 3.0**
+and has never shipped stable, so changes to it are documented as part of the
+feature — not as breaking.
 
-- **`pureJson` stringify option.** `stringify(value, { pureJson: true })` emits
-  strict, valid JSON. It is evaluated last and overrides the other output-shaping
-  options regardless of how they were set: double quotes, quoted property names,
-  BigInt as a bare integer (valid JSON number text), non-finite numbers as `null`,
-  no legacy escapes, and no trailing comma. `space`/`replacer`/`maxDepth` are left
-  untouched. Honored by both the string and byte (`raw: true`) serializers. The
-  CLI exposes it as `--pure-json`.
-- **`nonFinite` stringify option.** `stringify(value, { nonFinite })` controls how
-  the non-finite numbers `Infinity`, `-Infinity`, and `NaN` (none of which is
-  valid JSON) are serialized: `'literal'` (default, unchanged behavior) emits them
-  verbatim; `'null'` emits `null` instead, matching the global `JSON.stringify`,
-  so the output is valid JSON; `'throw'` throws a `TypeError`. Honored by both the
-  string and byte (`raw: true`) serializers. The CLI exposes it as
-  `--non-finite <literal|null|throw>`.
+### Breaking
 
-### Changed
-
+- **Reviver deletes array elements on `undefined`, matching `JSON.parse`.** When a
+  reviver returns `undefined` for an array element, that element is now deleted,
+  leaving a genuine hole (`length` unchanged, `1 in arr === false`, skipped by
+  `Object.keys`/`forEach`/`map`) — the same `[[Delete]]` `JSON.parse` performs.
+  Previously the array branch left a visited `undefined`. This changes inherited
+  reviver output. The object branch already deleted correctly; both parsers
+  (string and byte) now behave identically.
+- **`maxDepth` nesting cap (default 1000).** Applied to the inherited string
+  reviver walk (when a `reviver` is supplied) and both serializers: nesting
+  deeper than the cap now throws (`SyntaxError` on parse, `TypeError` on
+  serialize) where it previously parsed/serialized, converting an engine-level
+  call-stack `RangeError` into a controlled, typed limit. Raise it via the
+  `maxDepth` parse/stringify option.
+- **`Stringify11Options` is now a discriminated union.** `pureJson: true` is typed
+  mutually exclusive with the six output-shaping options it overrides
+  (`quote`/`quoteNames`/`withBigInt`/`trailingComma`/`withLegacyEscapes`/
+  `nonFinite`), so a TypeScript caller building an options object that sets both
+  may now fail to typecheck. This is a type-level change only — the runtime stays
+  lenient (`pureJson` wins at serialize time regardless).
 - **CLI output is now JSON11 by default.** The `json11` CLI serializes with this
   package's own `stringify` instead of the global `JSON.stringify`. This fixes a
   crash — a documented-valid BigInt input (e.g. `{ "n": 1186694007922679455n }`)
@@ -51,18 +60,31 @@ This project follows [Semantic Versioning]; the format is based on
   and `NaN` are emitted literally by default (valid JSON11, invalid JSON); pass
   `--non-finite null` to coerce them for valid JSON or `--non-finite throw` to
   fail loudly.
-- `RawValue`'s internal fields (`bytes`/`preEscaped`/`quote`) no longer appear in
-  the public type definitions (`dist/index.d.ts`/`.d.cts`) — they were never
-  intended to be public. This is a type-surface tightening only (pre-1.0 alpha);
-  the fields still exist at runtime, unchanged and non-enumerable, and no runtime
-  behavior changes.
-
-## [3.0.0-alpha.1]
-
-The first independent JSON11 release (forked from JSON5 v2.2.3).
 
 ### Added
 
+- **`maxNumericDigits` parse cap (default 10000).** Bounds the super-linear
+  base-10 → BigInt conversion against an attacker-sized literal; an over-cap
+  literal throws a `SyntaxError`. It gates **only** the BigInt conversion path —
+  an `n`-suffixed literal, or a long numeral promoted under `withLongNumerals`,
+  both new in 3.0 — so it does not change inherited plain-number parsing (not
+  breaking). Override via the `maxNumericDigits` parse option.
+- **`pureJson` stringify option.** `stringify(value, { pureJson: true })` emits
+  strict, valid JSON. It is evaluated last and overrides the other output-shaping
+  options regardless of how they were set: double quotes, quoted property names,
+  BigInt as a bare integer (valid JSON number text), non-finite numbers as `null`,
+  no legacy escapes, and no trailing comma. `space`/`replacer`/`maxDepth` are left
+  untouched. Honored by both the string and byte (`raw: true`) serializers. The
+  CLI exposes it as `--pure-json`. Note: a BigInt is emitted as a bare integer, so
+  a consumer reading it into an IEEE-754 double may lose precision; `pureJson`
+  does not throw on a BigInt the way the global `JSON.stringify` does.
+- **`nonFinite` stringify option.** `stringify(value, { nonFinite })` controls how
+  the non-finite numbers `Infinity`, `-Infinity`, and `NaN` (none of which is
+  valid JSON) are serialized: `'literal'` (default, unchanged behavior) emits them
+  verbatim; `'null'` emits `null` instead, matching the global `JSON.stringify`,
+  so the output is valid JSON; `'throw'` throws a `TypeError`. Honored by both the
+  string and byte (`raw: true`) serializers. The CLI exposes it as
+  `--non-finite <literal|null|throw>`.
 - **Byte mode** — secret-preserving parse/serialize. Additive and opt-in, with no
   new runtime dependencies and no change to the existing string APIs.
   - `parse(Uint8Array, …)` parses JSON11 directly from UTF-8 bytes
@@ -82,6 +104,9 @@ The first independent JSON11 release (forked from JSON5 v2.2.3).
     `RawValue.escaped(span, quote)` (verbatim, byte-identical) or
     `RawValue.raw(bytes)` (escaped by JSON11) so values can reach the output
     buffer without becoming a `String`.
+  - The byte-API factories fail closed on caller misuse: `RawValue.escaped(...)`
+    and `RawString.decodeBytes(...)` throw `TypeError` on an invalid quote or
+    span/offsets, rather than producing a malformed value.
   - New `RawString` and `RawValue` exports; parser- and serializer-side escaping
     share one engine so lifted spans round-trip byte-identically.
 - **BigInt** parsing and serialization.
@@ -89,11 +114,12 @@ The first independent JSON11 release (forked from JSON5 v2.2.3).
 
 ### Changed
 
-- **Byte mode no-`String` surface is now fail-closed (breaking).** The byte→`String`
-  hatch was renamed from `RawString.toString()` to `RawString.unsafeDecodeToString()`,
+- **Byte mode no-`String` surface is fail-closed.** (Part of the new 3.0 byte-mode
+  feature — not a break against any prior released contract.) The byte→`String`
+  hatch is named `RawString.unsafeDecodeToString()`, not `RawString.toString()`,
   because `toString` is exactly the method JavaScript calls implicitly during string
-  coercion — so the "explicit hatch" leaked on `` `${rs}` ``, `String(rs)`, `'' + rs`,
-  etc. Now:
+  coercion — a `toString` hatch would leak on `` `${rs}` ``, `String(rs)`, `'' + rs`,
+  etc. So:
   - `RawString.toString()` returns a byte-free placeholder (`[RawString length=…]`);
     `RawValue.toString()` likewise.
   - `Symbol.toPrimitive`, `valueOf`, and `toJSON` on `RawString`/`RawValue` **throw a
@@ -109,15 +135,33 @@ The first independent JSON11 release (forked from JSON5 v2.2.3).
   `import { parse } from 'json11'` works as before, and a default export is now
   also provided so `import JSON11 from 'json11'` and `import * as JSON11 from
   'json11'` bind the full API too.
+- `RawValue`'s internal fields (`bytes`/`preEscaped`/`quote`) are not part of the
+  public type definitions (`dist/index.d.ts`/`.d.cts`). Because the whole
+  `RawValue` surface is new in 3.0 (still in 3.x alpha) and has never shipped
+  stable, this is the type's intended public shape, not a removal: the fields
+  exist at runtime, unchanged and non-enumerable, with no runtime behavior change.
 
 ### Fixed
 
-- **Reviver now deletes array elements on `undefined`, matching `JSON.parse`
-  (behavior change).** When a reviver returns `undefined` for an array element,
-  that element is now deleted, leaving a genuine hole (`length` unchanged,
-  `1 in arr === false`, skipped by `Object.keys`/`forEach`/`map`) — the same
-  `[[Delete]]` `JSON.parse` performs. Previously the array branch left a visited
-  `undefined` instead. The object branch already deleted correctly; both parsers
-  (string and byte) now behave identically.
+- **`RawValue.raw` escaping now matches the canonical one-engine output.** Bytes
+  handed to `RawValue.raw(...)` are escaped through the same shared escape engine
+  the string and byte serializers use, so an injected raw value round-trips
+  byte-identically with a value escaped on the normal path.
+
+### Documentation
+
+- Documented `stringify`'s `toJSON11` > `toJSON5` > `toJSON` precedence (the first
+  hook present wins; `JSON.stringify` only knows `toJSON`, so a value defining both
+  serializes differently under JSON11). Honored by both serializers.
+- Documented the raw-mode TypeScript caveats: parsed raw string *values* are
+  `RawString`, not the `string` an annotation may claim; the `Uint8Array`
+  `stringify` return is selected only for a **literal** `raw: true`; and `parse`
+  keeps its `string` and `Uint8Array` overloads separate (no `string | Uint8Array`
+  union overload, to preserve the no-`String` guarantee).
+- Documented the full `RawString`/`RawValue` coercion matrix (`toString` redacts;
+  `Symbol.toPrimitive`/`valueOf`/`toJSON` throw) and a consolidated **Known
+  limitations** section (quoted-key deep-nest serialize cost; byte-parser
+  error-position drift, cosmetic; `pureJson` + BigInt precision; `raw: 'all'`
+  aliasing `raw: 'values'`).
 
 [3.0.0-alpha.1]: https://github.com/AMoo-Miki/JSON11/releases/tag/v3.0.0-alpha.1

@@ -128,10 +128,25 @@ transformation on the resulting object before it is returned.
 #### Parameters
 - `text`: The JSON11 document to parse. This may be a `string`, **or** a
   `Uint8Array`/`Buffer` of UTF-8 bytes (see [Byte mode](#byte-mode-borrowed-value-spans)).
+  The `string` and `Uint8Array` overloads are intentionally kept separate rather
+  than offered as a single `string | Uint8Array` union — a union overload would
+  have to pin `raw: 'off'` to preserve the no-`String` guarantee — so a caller
+  holding a `string | Uint8Array` value must narrow it to one branch before
+  calling.
 - `reviver`: If a function, this prescribes how the value originally produced by
   parsing is transformed, before being returned.
 - `options`: An object with the following properties:
   - `withLongNumerals`: (false) To parse integers beyond safe limits as BigInt.
+  - `maxNumericDigits`: (10000) Maximum digit length of a numeric literal that
+    feeds a `BigInt(...)` conversion — an `n`-suffixed literal, or a long numeral
+    promoted under `withLongNumerals`. Base-10 → BigInt conversion is
+    super-linear in the digit count, so this bounds a CPU/event-loop DoS from an
+    attacker-sized literal; an over-cap literal throws a `SyntaxError`. Plain
+    number literals (parsed to a JS `number`) are unaffected.
+  - `maxDepth`: (1000) Maximum nesting depth the reviver walk descends before
+    throwing a `SyntaxError`. The cap applies only when a `reviver` is supplied
+    (tree construction is iterative and unaffected); it bounds a JS-call-stack
+    overflow on a deeply-nested document. Raise it if you need deeper nesting.
   - `raw`: (`'off'`) Borrowed-span byte mode. Only valid when `text` is a
     `Uint8Array`. `'values'` returns string **values** as borrowed `RawString`
     spans instead of JS strings (object keys are still decoded to strings);
@@ -141,6 +156,13 @@ transformation on the resulting object before it is returned.
 #### Return value
 The object corresponding to the given JSON11 text. In `raw` mode, string values
 are `RawString` instances rather than JS strings.
+
+> **TypeScript note (raw mode).** The `parse` overloads do **not** rewrite nested
+> string fields to `RawString` in raw mode, so a caller annotating
+> `parse<{ k: string }>(bytes, null, { raw: 'values' })` is told `k: string`
+> while at runtime `k` is a `RawString`. Type value fields you read in raw mode as
+> `RawString` (or `string | RawString`) yourself; this is an opt-in trade-off, not
+> a type-system change.
 
 ### JSON11.stringify()
 Converts a JavaScript value to a JSON11 string, optionally replacing values if a
@@ -187,10 +209,29 @@ properties if a replacer array is specified.
     numbers as `null`, no legacy escapes, and no trailing comma. `space`,
     `replacer`, and `maxDepth` are orthogonal to JSON validity and left as you set
     them.
+  - `maxDepth`: (1000) Maximum nesting depth the serializer descends before
+    throwing a `TypeError`. The serializer recurses once per nesting level, so a
+    deeply-nested value can overflow the JS call stack; this bounds it. Raise it
+    if you need deeper nesting.
   - `raw`: (false) Byte mode. When `true`, `stringify` returns a `Uint8Array` of
     UTF-8 bytes instead of a string, and recognizes `RawValue`/`RawString` nodes
     that are injected into the output without becoming JS strings (see
     [Byte mode](#byte-mode-borrowed-value-spans)).
+
+> **TypeScript note (`raw: true`).** The `Uint8Array` return type is selected only
+> when `raw` is the **literal** `true`. An options object typed as
+> `{ raw: boolean }` (computed at runtime) falls to the `string | undefined`
+> overload even though at runtime it still returns a `Uint8Array`. Pass a literal
+> `true`, or narrow/assert the result, when you need the `Uint8Array` type.
+
+#### `toJSON11` / `toJSON5` / `toJSON`
+When a value defines a custom serialization hook, `stringify` honors them in the
+order **`toJSON11` > `toJSON5` > `toJSON`** — the first one present is called and
+the others are ignored. (The global `JSON.stringify` only knows `toJSON`, so a
+value that defines both `toJSON` and `toJSON11`/`toJSON5` serializes differently
+under JSON11 than under `JSON`.) Both the string and byte serializers apply the
+same precedence. `parse` has no analogous hook ladder — it transforms results only
+through the standard `reviver` callback.
 
 #### Return value
 A JSON11 string representing the value, or a `Uint8Array` when `raw: true`.
@@ -230,12 +271,35 @@ v.decode()            // Uint8Array of the *decoded* value bytes ("S3cr3tA"), ne
 // v.unsafeDecodeToString()  // ONLY for non-secrets: this materializes a JS String
 ```
 
-A `RawString` fails closed against accidental leaks: `toString()` returns a
-byte-free placeholder (`[RawString length=…]`), implicit coercion
-(`` `${v}` ``, `String(v)`, `'' + v`, `[v].join()`) and `JSON.stringify(doc)`
-**throw** a `TypeError`, and the byte-bearing fields are non-enumerable. To
-materialize on purpose, call `unsafeDecodeToString()` for a single value, or — to
-JSON-serialize a whole parsed tree — `JSON11.unsafeEncodeAsJSON(doc)`:
+#### Coercion matrix — every path fails closed
+
+`RawString` and `RawValue` behave identically: implicit coercion never leaks the
+bytes, and the only paths to a `String` are explicitly named `unsafe*` and opt-in.
+
+| member | `RawString` | `RawValue` |
+|---|---|---|
+| `toString()` | returns redacted `[RawString length=N]` (no bytes) | returns redacted `[RawValue length=N]` (no bytes) |
+| `[Symbol.toPrimitive]()` | **throws** `TypeError` (catches `` `${x}` ``, `String(x)`, `'' + x`, `[x].join()`, `x.toLocaleString()`) | **throws** `TypeError` |
+| `valueOf()` | **throws** `TypeError` | **throws** `TypeError` |
+| `toJSON()` | **throws** `TypeError` (so `JSON.stringify(rawTree)` fails loud for **any** raw-parsed tree, secret-bearing or not) | **throws** `TypeError` |
+
+The byte-bearing fields (`RawString.source`/`start`/`end`/`quote`,
+`RawValue.bytes`/`preEscaped`/`quote`) are non-enumerable, so `Object.keys`,
+`JSON.stringify`, and the default `util.inspect` cannot dump them.
+
+The **only sanctioned doors** are:
+
+- `RawString.unsafeDecodeToString()` — materializes **one** value to a `String`.
+  Never call it for a secret.
+- `RawString.decode()` / `.copy()` / `.span()` — return **bytes**, never a
+  `String`.
+- `stringify(value, { raw: true })` — serializes a tree containing `RawValue`
+  nodes to a `Uint8Array`, never a `String`.
+- `JSON11.unsafeEncodeAsJSON(tree)` — materializes a **whole** parsed tree to
+  plain JSON values (every borrowed value → `String`). Never for a secret.
+
+So to materialize on purpose, call `unsafeDecodeToString()` for a single value,
+or — to JSON-serialize a whole parsed tree — `JSON11.unsafeEncodeAsJSON(doc)`:
 
 ```js
 import JSON11 from 'json11'
@@ -312,6 +376,37 @@ tree in byte mode; it is injected by its escaped span.
   spliced into another round-trips byte-identically.
 - **Caller owns buffer lifetime.** `span()` aliases your input buffer; you are
   responsible for zeroing input/output buffers when done.
+
+
+## Known limitations
+
+These are conscious, documented trade-offs — none affects the no-`String`
+guarantee, the typed-error contract, or output correctness.
+
+- **`raw: 'all'` is an alias for `raw: 'values'`.** JavaScript object keys are
+  always `String`s, so a raw parse cannot keep keys out of `String`; only string
+  *values* are returned as `RawString`. Put secrets in values, not keys.
+- **Quoted-key deep-nest serialize cost.** With `quoteNames: true` (or
+  non-identifier keys) the byte serializer must place each quoted key in front of
+  its already-serialized value to stay byte-identical to the string path, which
+  re-copies the value bytes; for deeply-nested quoted-key objects this extra
+  byte-copying grows with depth (bounded by the `maxDepth` cap). Bare-identifier
+  keys serialize in a single pass. See the note under
+  [Writing values from bytes](#writing-values-from-bytes).
+- **`pureJson` + BigInt.** `pureJson: true` (and the CLI `--pure-json`) emits a
+  BigInt as a **bare integer** (e.g. `10`) — valid JSON *text*, but a consumer
+  reading it into an IEEE-754 double may lose precision. This is deliberate so
+  `pureJson` does not fail on a BigInt-bearing document; it does **not** throw the
+  way the global `JSON.stringify` does on a BigInt.
+- **Byte-parser error position can drift (cosmetic).** In a few cases the byte
+  parser's reported `line`/`column` can differ slightly from the string parser's:
+  a newline inside a string can shift the reported line; one identifier-error path
+  can report a negative column; and one byte-parser error site reports no column.
+  The error **type** (`SyntaxError`/`JSON11ByteError`) and all safety properties
+  are unaffected — only the reported position may be off.
+- **`U+2028`/`U+2029` advisory warning.** A raw line/paragraph separator inside a
+  string triggers a `console.warn` advisory (the character is valid in JSON/JSON11
+  but not in pre-ES2019 ECMAScript). The warning text carries no value bytes.
 
 
 ## CLI
