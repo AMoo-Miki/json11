@@ -4,7 +4,7 @@ import tseslint from "typescript-eslint";
 
 export default tseslint.config(
   {
-    ignores: ['lib/**/*', 'dist/**/*', '.coverage/**/*', '.tmp-compat/**/*'],
+    ignores: ['lib/**/*', 'dist/**/*', '.coverage/**/*', '.tmp-compat/**/*', 'test/fixtures/json5-tests/**/*'],
   },
   {
     languageOptions: { globals: { ...globals.browser, ...globals.node } },

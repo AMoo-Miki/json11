@@ -2,8 +2,8 @@
 We're glad you're interested in contributing to JSON11.
 
 ## Development
-Fork this repository, clone your fork, and install the dependencies in your
-cloned folder with `npm i`.
+Fork this repository, clone your fork, initialize the JSON5 test vectors with
+`git submodule update --init`, and install the dependencies with `npm i`.
 
 When contributing code, please write relevant tests and run `npm test` and `npm
 run lint` before submitting pull requests. Please use an editor that supports
